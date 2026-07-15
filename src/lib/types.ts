@@ -5,6 +5,9 @@ export type AppView =
   | "studies"
   | "states"
   | "transitions"
+  | "state-comparison"
+  | "understanding-evolution"
+  | "reflexivity-engine"
   | "map"
   | "emotions"
   | "catalysts"
@@ -173,4 +176,166 @@ export interface ReflexiveMapData {
 export interface ObservatoryData {
   version: 1;
   studies: Study[];
+}
+
+export type ScientificLabel =
+  | "Observation"
+  | "Hypothese"
+  | "Relation possible"
+  | "Reformulation probable"
+  | "Transformation observee"
+  | "Indicateurs insuffisants"
+  | "Confirmation utilisateur requise";
+
+export type DifferenceKind =
+  | "addition"
+  | "removal"
+  | "probable-reformulation"
+  | "stabilization"
+  | "potential-contradiction"
+  | "insufficient-data";
+
+export type DifferenceCategory =
+  | "concept"
+  | "relation"
+  | "emotion"
+  | "decision"
+  | "project"
+  | "language"
+  | "stability"
+  | "transmission";
+
+export interface ReformulationCandidate {
+  before: string;
+  after: string;
+  category: DifferenceCategory;
+  confidence: number;
+  reason: string;
+  status: "Confirmation utilisateur requise";
+  mergedAutomatically: false;
+}
+
+export interface DifferenceItem {
+  id: string;
+  kind: DifferenceKind;
+  category: DifferenceCategory;
+  label: ScientificLabel;
+  before?: string;
+  after?: string;
+  detail: string;
+  confidence: number;
+  requiresUserValidation?: boolean;
+}
+
+export interface ConceptFrequency {
+  concept: string;
+  before: number;
+  after: number;
+  delta: number;
+}
+
+export interface LanguageEvolution {
+  newWords: string[];
+  abandonedWords: string[];
+  stableWords: string[];
+  vocabularyDelta: number;
+  conceptFrequency: ConceptFrequency[];
+  reformulationCandidates: ReformulationCandidate[];
+  status: ScientificLabel;
+}
+
+export interface StateDifference {
+  fromStateId: string;
+  toStateId: string;
+  timeBetweenDays: number | null;
+  totalDifferences: number;
+  categoriesConcerned: DifferenceCategory[];
+  stabilityLevel: "stable" | "variation faible" | "variation forte" | "Indicateurs insuffisants";
+  items: DifferenceItem[];
+  conceptsAdded: string[];
+  conceptsRemoved: string[];
+  conceptsReformulated: ReformulationCandidate[];
+  relationsAdded: string[];
+  relationsRemoved: string[];
+  relationsReformulated: ReformulationCandidate[];
+  emotionsNew: string[];
+  emotionsDisappeared: string[];
+  emotionsStabilized: string[];
+  decisionsNew: string[];
+  decisionsAbandoned: string[];
+  projectsNew: string[];
+  projectsAbandoned: string[];
+  language: LanguageEvolution;
+  insufficientIndicators: string[];
+}
+
+export interface DeltaFactor {
+  label: string;
+  category: DifferenceCategory;
+  value: number;
+  reason: string;
+  sourceDifferenceIds: string[];
+}
+
+export interface DeltaScore {
+  score: number;
+  positiveFactors: DeltaFactor[];
+  negativeFactors: DeltaFactor[];
+  neutralFactors: DeltaFactor[];
+  limits: string[];
+  interpretation: "variation observable" | "variation nulle ou stable" | "indicateurs insuffisants";
+}
+
+export interface RelationProposal {
+  id: string;
+  elements: [string, string];
+  reason: string;
+  confidence: number;
+  provenance: string[];
+  initialStatus: "hypothese";
+  actions: ["valider", "rejeter"];
+}
+
+export interface CatalystMetrics {
+  name: string;
+  frequency: number;
+  averageDaysBeforeTransformation: number | null;
+  associatedTransitions: number;
+  associatedEmotions: string[];
+  associatedTransmissions: string[];
+  influenceScore: number;
+  limits: string[];
+}
+
+export interface EmotionSequence {
+  sequence: string[];
+  count: number;
+  label: "Observation";
+  limits: string[];
+}
+
+export interface ReflexivityDashboard {
+  averageDelta: number | null;
+  averageDaysBetweenStates: number | null;
+  averageDaysBeforeStabilization: number | null;
+  newConcepts: string[];
+  newRelations: string[];
+  frequentEmotions: Array<{ label: string; value: number }>;
+  frequentCatalysts: CatalystMetrics[];
+  newVocabulary: string[];
+  transmissions: string[];
+  limits: string[];
+}
+
+export interface TrajectoryComparison {
+  studyIds: [string, string];
+  similarity: number;
+  commonSteps: string[];
+  averageDays: number | null;
+  commonCatalysts: string[];
+  commonEmotions: string[];
+  commonTransmissionForms: string[];
+  comparedDimensions: string[];
+  excludedDimensions: string[];
+  limits: string[];
 }

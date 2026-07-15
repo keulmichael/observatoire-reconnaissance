@@ -10,15 +10,18 @@ import {
   CalendarDays,
   Copy,
   Download,
+  GitCompare,
   GitBranch,
   Home,
   Import,
+  Microscope,
   Network,
   Plus,
   RefreshCw,
   Save,
   Search,
   Sparkles,
+  TrendingUp,
   Trash2
 } from "lucide-react";
 import { ReflexiveMap } from "@/components/reflexive-map";
@@ -33,12 +36,18 @@ import {
 } from "@/lib/analytics";
 import type { AppView, Study, TransitionStage } from "@/lib/types";
 import { RecognitionCharts } from "@/components/recognition-charts";
+import { DeltaEngine } from "@/lib/engines/DeltaEngine";
+import { ReflexivityDashboardEngine } from "@/lib/engines/ReflexivityDashboardEngine";
+import { StateDifferenceEngine } from "@/lib/engines/StateDifferenceEngine";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "dashboard", label: "Tableau de bord", icon: Home },
   { id: "studies", label: "Études", icon: BookOpen },
   { id: "states", label: "États", icon: Brain },
   { id: "transitions", label: "Transitions Δ", icon: GitBranch },
+  { id: "state-comparison", label: "Comparaison d'états", icon: GitCompare },
+  { id: "understanding-evolution", label: "Evolution d'une compréhension", icon: TrendingUp },
+  { id: "reflexivity-engine", label: "Moteur de Réflexivité", icon: Microscope },
   { id: "map", label: "Carte réflexive", icon: Network },
   { id: "emotions", label: "Émotions", icon: Activity },
   { id: "catalysts", label: "Catalyseurs", icon: Sparkles },
@@ -87,6 +96,7 @@ export default function ObservatoryApp() {
   const [query, setQuery] = useState("");
   const dashboard = useMemo(() => buildDashboard(data), [data]);
   const analysis = useMemo(() => buildAnalysis(data), [data]);
+  const reflexivityDashboard = useMemo(() => ReflexivityDashboardEngine.build(data), [data]);
   const timeline = useMemo(() => buildTimeline(selectedStudy), [selectedStudy]);
 
   const studies = data.studies.filter((study) =>
@@ -184,6 +194,9 @@ export default function ObservatoryApp() {
           )}
           {view === "states" && <States study={selectedStudy} />}
           {view === "transitions" && <Transitions study={selectedStudy} />}
+          {view === "state-comparison" && <StateComparison study={selectedStudy} />}
+          {view === "understanding-evolution" && <UnderstandingEvolution study={selectedStudy} />}
+          {view === "reflexivity-engine" && <ReflexivityEngineDashboard dashboard={reflexivityDashboard} />}
           {view === "map" && selectedStudy && <ReflexiveMap study={selectedStudy} onChange={updateMap} />}
           {view === "emotions" && <Emotions study={selectedStudy} />}
           {view === "catalysts" && <Catalysts study={selectedStudy} />}
@@ -374,6 +387,139 @@ function States({ study }: { study?: Study }) {
   );
 }
 
+function StateComparison({ study }: { study?: Study }) {
+  const sortedStates = useMemo(() => study?.states.slice().sort((a, b) => a.date.localeCompare(b.date)) ?? [], [study]);
+  const [fromStateId, setFromStateId] = useState("");
+  const [toStateId, setToStateId] = useState("");
+  if (!study || sortedStates.length < 2) return <EmptyState />;
+
+  const fromState = sortedStates.find((state) => state.id === fromStateId) ?? sortedStates[0];
+  const toState = sortedStates.find((state) => state.id === toStateId) ?? sortedStates[sortedStates.length - 1];
+  const difference = StateDifferenceEngine.compare(fromState, toState);
+  const delta = DeltaEngine.calculate(difference);
+
+  return (
+    <div className="grid gap-4">
+      <Panel title="Choix des Ã©tats">
+        <div className="grid gap-3 md:grid-cols-2">
+          <StateSelect label="Etat A" states={sortedStates} value={fromState.id} onChange={setFromStateId} />
+          <StateSelect label="Etat B" states={sortedStates} value={toState.id} onChange={setToStateId} />
+        </div>
+      </Panel>
+      <div className="grid gap-4 xl:grid-cols-[1fr_120px_1fr]">
+        <StateSnapshot title="Etat A" state={fromState} />
+        <div className="glass flex items-center justify-center rounded-lg p-4 text-3xl text-goldSoft">â†’</div>
+        <StateSnapshot title="Etat B" state={toState} />
+      </div>
+      <Panel title="DiffÃ©rences dÃ©tectÃ©es">
+        <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <StatCard label="DiffÃ©rences" value={difference.totalDifferences} />
+          <StatCard label="CatÃ©gories" value={difference.categoriesConcerned.length} />
+          <StatCard label="StabilitÃ©" value={difference.stabilityLevel} />
+          <StatCard label="Temps entre Ã©tats" value={difference.timeBetweenDays === null ? "non calculable" : `${difference.timeBetweenDays} jours`} />
+        </div>
+        <div className="grid gap-2">
+          {difference.items.map((item) => (
+            <div key={item.id} className={`rounded-md border p-3 ${differenceColor(item.kind)}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-white">{item.label}</p>
+                <Badge>{item.category}</Badge>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-stone-200">{item.detail}</p>
+              {item.before || item.after ? (
+                <p className="mt-2 text-xs text-stone-400">
+                  {item.before ? `Avant : ${item.before}` : ""} {item.after ? `AprÃ¨s : ${item.after}` : ""}
+                </p>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </Panel>
+      <DeltaPanel delta={delta} />
+    </div>
+  );
+}
+
+function UnderstandingEvolution({ study }: { study?: Study }) {
+  if (!study || study.states.length < 2) return <EmptyState />;
+  const states = study.states.slice().sort((a, b) => a.date.localeCompare(b.date));
+  const transitions = states.slice(1).map((state, index) => {
+    const difference = StateDifferenceEngine.compare(states[index], state);
+    return { before: states[index], after: state, difference, delta: DeltaEngine.calculate(difference) };
+  });
+
+  return (
+    <div className="grid gap-4">
+      {transitions.map((transition) => (
+        <Panel key={`${transition.before.id}-${transition.after.id}`} title={`${transition.before.title} â†’ ${transition.after.title}`}>
+          <div className="grid gap-3 md:grid-cols-4">
+            <StatCard label="Î”(S) brut" value={transition.delta.score} />
+            <StatCard label="DiffÃ©rences" value={transition.difference.totalDifferences} />
+            <StatCard label="StabilitÃ©" value={transition.difference.stabilityLevel} />
+            <StatCard label="DurÃ©e" value={transition.difference.timeBetweenDays === null ? "non calculable" : `${transition.difference.timeBetweenDays} jours`} />
+          </div>
+          <div className="mt-4 grid gap-2">
+            {transition.delta.limits.map((limit) => (
+              <div key={limit} className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-300">
+                {limit}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ))}
+    </div>
+  );
+}
+
+function ReflexivityEngineDashboard({ dashboard }: { dashboard: ReturnType<typeof ReflexivityDashboardEngine.build> }) {
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+        <StatCard label="Î” moyen" value={dashboard.averageDelta ?? "indicateurs insuffisants"} />
+        <StatCard label="Temps moyen entre Ã©tats" value={dashboard.averageDaysBetweenStates === null ? "indicateurs insuffisants" : `${dashboard.averageDaysBetweenStates} jours`} />
+        <StatCard label="Temps avant stabilisation" value={dashboard.averageDaysBeforeStabilization === null ? "indicateurs insuffisants" : `${dashboard.averageDaysBeforeStabilization} jours`} />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Panel title="Concepts et vocabulaire nouveaux">
+          <TagBlock title="Concepts nouveaux" items={dashboard.newConcepts} />
+          <TagBlock title="Vocabulaire nouveau" items={dashboard.newVocabulary.slice(0, 18)} />
+        </Panel>
+        <Panel title="Relations et transmissions">
+          <TagBlock title="Relations nouvelles" items={dashboard.newRelations} />
+          <TagBlock title="Transmissions" items={dashboard.transmissions} />
+        </Panel>
+      </div>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Panel title="Ã‰motions frÃ©quentes">
+          <RankedList items={dashboard.frequentEmotions} empty="Indicateurs insuffisants." />
+        </Panel>
+        <Panel title="Catalyseurs selon observations">
+          <div className="grid gap-2">
+            {dashboard.frequentCatalysts.map((catalyst) => (
+              <div key={catalyst.name} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-medium text-white">{catalyst.name}</p>
+                  <Badge>{catalyst.influenceScore}</Badge>
+                </div>
+                <p className="mt-2 text-sm text-stone-400">{catalyst.limits[0]}</p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+      <Panel title="Limites du calcul">
+        <div className="grid gap-2">
+          {dashboard.limits.map((limit) => (
+            <div key={limit} className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-300">
+              {limit}
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
 function Transitions({ study }: { study?: Study }) {
   if (!study) return <EmptyState />;
   return (
@@ -527,6 +673,99 @@ function Analysis({ analysis }: { analysis: ReturnType<typeof buildAnalysis> }) 
       </Panel>
     </div>
   );
+}
+
+function StateSelect({
+  label,
+  states,
+  value,
+  onChange
+}: {
+  label: string;
+  states: Study["states"];
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <label className="grid gap-2">
+      <span className="text-sm font-medium text-stone-200">{label}</span>
+      <select
+        className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        {states.map((state) => (
+          <option className="bg-ink" key={state.id} value={state.id}>
+            {state.title}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function StateSnapshot({ title, state }: { title: string; state: Study["states"][number] }) {
+  return (
+    <Panel title={title}>
+      <p className="text-sm text-stone-400">{state.date}</p>
+      <h3 className="mt-2 font-semibold text-white">{state.title}</h3>
+      <p className="mt-3 text-sm leading-6 text-stone-200">{state.formulation || "Indicateurs insuffisants"}</p>
+      <div className="mt-4 grid gap-3 sm:grid-cols-2">
+        <StatCard label="StabilitÃ©" value={`${state.stability}/10`} />
+        <StatCard label="Confiance" value={`${state.confidence}/10`} />
+      </div>
+    </Panel>
+  );
+}
+
+function DeltaPanel({ delta }: { delta: ReturnType<typeof DeltaEngine.calculate> }) {
+  return (
+    <Panel title="Î”(S) - calcul transparent">
+      <div className="mb-4 grid gap-3 md:grid-cols-4">
+        <StatCard label="Score brut" value={delta.score} />
+        <StatCard label="Facteurs positifs" value={delta.positiveFactors.length} />
+        <StatCard label="Facteurs nÃ©gatifs" value={delta.negativeFactors.length} />
+        <StatCard label="Facteurs neutres" value={delta.neutralFactors.length} />
+      </div>
+      <div className="grid gap-4 xl:grid-cols-3">
+        <FactorList title="Facteurs positifs" factors={delta.positiveFactors} />
+        <FactorList title="Facteurs nÃ©gatifs" factors={delta.negativeFactors} />
+        <FactorList title="Facteurs neutres" factors={delta.neutralFactors} />
+      </div>
+      <TagBlock title="Limites" items={delta.limits} />
+    </Panel>
+  );
+}
+
+function FactorList({ title, factors }: { title: string; factors: ReturnType<typeof DeltaEngine.calculate>["positiveFactors"] }) {
+  return (
+    <div>
+      <h4 className="text-xs uppercase tracking-[0.18em] text-stone-500">{title}</h4>
+      <div className="mt-2 grid gap-2">
+        {factors.length ? (
+          factors.map((factor) => (
+            <div key={`${factor.label}-${factor.value}`} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-sm font-medium text-white">{factor.label}</p>
+                <Badge>{factor.value}</Badge>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-stone-400">{factor.reason}</p>
+            </div>
+          ))
+        ) : (
+          <p className="text-sm text-stone-500">Non renseignÃ©</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function differenceColor(kind: string) {
+  if (kind === "addition") return "border-emerald-400/35 bg-emerald-400/10";
+  if (kind === "probable-reformulation") return "border-orange-400/35 bg-orange-400/10";
+  if (kind === "removal" || kind === "potential-contradiction") return "border-red-400/35 bg-red-400/10";
+  if (kind === "stabilization") return "border-sky-400/35 bg-sky-400/10";
+  return "border-white/10 bg-white/[0.04]";
 }
 
 function RankedList({ items, empty }: { items: Array<{ label: string; value: number | string }>; empty: string }) {
