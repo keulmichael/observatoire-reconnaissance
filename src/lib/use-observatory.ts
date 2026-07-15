@@ -7,15 +7,18 @@ import type { ObservationAnalysisDraft, ObservatoryData, Study } from "./types";
 import { downloadJson } from "./analytics";
 import { addObservationToStudy, constructScientificStudy } from "./parser/ScientificConstruction";
 import { migrateObservatoryData, normalizeStudy } from "./data-migration";
+import { formatStudyDeletionConfirmation } from "./study-deletion";
 
 export function useObservatory() {
   const [data, setData] = useState<ObservatoryData>({ version: 1, studies: [], observationDrafts: [] });
-  const [selectedStudyId, setSelectedStudyId] = useState("");
+  const [selectedStudyId, setSelectedStudyId] = useState<string | null>(null);
+  const [isDeletingStudy, setIsDeletingStudy] = useState(false);
+  const [studyNotice, setStudyNotice] = useState("");
 
   useEffect(() => {
     const loaded = repository.load();
     setData(loaded);
-    setSelectedStudyId(loaded.studies[0]?.id ?? "");
+    setSelectedStudyId(loaded.studies[0]?.id ?? null);
   }, []);
 
   useEffect(() => {
@@ -70,12 +73,22 @@ export function useObservatory() {
   }
 
   function deleteStudy(id: string) {
-    if (!window.confirm("Supprimer cette étude et ses observations ?")) return;
-    setData((current) => {
-      const studies = current.studies.filter((study) => study.id !== id);
-      setSelectedStudyId(studies[0]?.id ?? "");
-      return { ...current, studies };
-    });
+    const study = data.studies.find((item) => item.id === id);
+    if (!study || isDeletingStudy) return;
+    if (!window.confirm(formatStudyDeletionConfirmation(study))) return;
+    setIsDeletingStudy(true);
+    setStudyNotice("");
+    try {
+      const result = repository.deleteStudy(data, id);
+      setData(result.data);
+      setSelectedStudyId(result.nextSelectedStudyId);
+      setStudyNotice("Étude supprimée.");
+    } catch {
+      setStudyNotice("La suppression a échoué. Aucune donnée n’a été modifiée.");
+      window.alert("La suppression a échoué. Aucune donnée n’a été modifiée.");
+    } finally {
+      setIsDeletingStudy(false);
+    }
   }
 
   function duplicateStudy(id: string) {
@@ -96,7 +109,7 @@ export function useObservatory() {
     if (!window.confirm("Réinitialiser les données de démonstration ?")) return;
     const reset = repository.reset();
     setData(reset);
-    setSelectedStudyId(reset.studies[0]?.id ?? "");
+    setSelectedStudyId(reset.studies[0]?.id ?? null);
   }
 
   async function importJson(file: File) {
@@ -106,7 +119,7 @@ export function useObservatory() {
       if ("studies" in parsed) {
         const migrated = migrateObservatoryData(parsed);
         setData(migrated);
-        setSelectedStudyId(migrated.studies[0]?.id ?? "");
+        setSelectedStudyId(migrated.studies[0]?.id ?? null);
       } else {
         setData((current) => ({ ...current, studies: [normalizeStudy(parsed), ...current.studies] }));
         setSelectedStudyId(parsed.id);
@@ -166,6 +179,8 @@ export function useObservatory() {
     updateStudy,
     deleteStudy,
     duplicateStudy,
+    isDeletingStudy,
+    studyNotice,
     resetDemoData,
     importJson,
     exportAll,

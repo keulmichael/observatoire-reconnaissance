@@ -1,6 +1,7 @@
 import { demoData } from "./demo-data";
 import { migrateObservatoryData } from "./data-migration";
 import type { ObservatoryData } from "./types";
+import { deleteStudyWithPersistence } from "./study-deletion";
 
 const STORAGE_KEY = "observatoire-reconnaissance:v1";
 
@@ -32,5 +33,8 @@ export const repository = {
     const migrated = migrateObservatoryData(demoData);
     this.save(migrated);
     return migrated;
+  },
+  deleteStudy(data: ObservatoryData, studyId: string) {
+    return deleteStudyWithPersistence(data, studyId, (nextData) => this.save(nextData));
   }
 };

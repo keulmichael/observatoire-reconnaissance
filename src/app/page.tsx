@@ -96,6 +96,8 @@ export default function ObservatoryApp() {
     updateStudy,
     deleteStudy,
     duplicateStudy,
+    isDeletingStudy,
+    studyNotice,
     resetDemoData,
     importJson,
     exportAll,
@@ -268,6 +270,8 @@ export default function ObservatoryApp() {
               updateStudy={updateStudy}
               deleteStudy={deleteStudy}
               duplicateStudy={duplicateStudy}
+              isDeletingStudy={isDeletingStudy}
+              studyNotice={studyNotice}
             />
           )}
           {view === "states" && <States study={selectedStudy} />}
@@ -920,11 +924,13 @@ function SmartEmpty({ text }: { text: string }) {
 
 function Studies(props: {
   studies: Study[];
-  selectedStudyId: string;
+  selectedStudyId: string | null;
   selectStudy: (id: string) => void;
   updateStudy: (study: Study) => void;
   deleteStudy: (id: string) => void;
   duplicateStudy: (id: string) => void;
+  isDeletingStudy: boolean;
+  studyNotice: string;
 }) {
   const selected = props.studies.find((study) => study.id === props.selectedStudyId) ?? props.studies[0];
   const [tab, setTab] = useState("overview");
@@ -976,7 +982,10 @@ function Studies(props: {
     <div className="grid gap-4 xl:grid-cols-[340px_1fr]">
       <Panel title="Liste des études">
         <div className="grid gap-2">
-          {props.studies.map((study) => (
+          {props.studyNotice ? (
+            <div className="rounded-md border border-gold/30 bg-gold/10 p-3 text-sm text-goldSoft">{props.studyNotice}</div>
+          ) : null}
+          {props.studies.length ? props.studies.map((study) => (
             <button
               key={study.id}
               onClick={() => props.selectStudy(study.id)}
@@ -987,7 +996,7 @@ function Studies(props: {
               <p className="font-medium text-white">{study.title}</p>
               <p className="mt-1 text-sm text-stone-400">{study.subject}</p>
             </button>
-          ))}
+          )) : <SmartEmpty text="Aucune étude enregistrée. Ajoutez une observation ou créez une étude vide pour commencer." />}
         </div>
       </Panel>
       {selected && (
@@ -1013,8 +1022,12 @@ function Studies(props: {
             <button className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => exportStudy(selected)}>
               <Download className="mr-2 inline h-4 w-4" aria-hidden /> Export JSON
             </button>
-            <button className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-200" onClick={() => props.deleteStudy(selected.id)}>
-              <Trash2 className="mr-2 inline h-4 w-4" aria-hidden /> Supprimer
+            <button
+              className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-200 disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={() => props.deleteStudy(selected.id)}
+              disabled={props.isDeletingStudy}
+            >
+              <Trash2 className="mr-2 inline h-4 w-4" aria-hidden /> {props.isDeletingStudy ? "Suppression..." : "Supprimer"}
             </button>
           </div>
         </Panel>
@@ -1059,6 +1072,13 @@ function Studies(props: {
           {tab === "stats" && <StudyStats study={selected} />}
           {tab === "history" && <StudyHistory study={selected} />}
           {tab === "export" && <StudyExportImport study={selected} />}
+        </div>
+      )}
+      {!selected && (
+        <div className="xl:col-start-2">
+          <Panel title="Aucune étude sélectionnée">
+            <SmartEmpty text="Aucune étude n'est disponible. Le journal d'observation permet de créer ou d'alimenter une étude." />
+          </Panel>
         </div>
       )}
     </div>
