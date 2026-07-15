@@ -108,6 +108,8 @@ export default function ObservatoryApp() {
   const [observationText, setObservationText] = useState("");
   const [currentDraft, setCurrentDraft] = useState<ObservationAnalysisDraft | null>(null);
   const [integrationNotice, setIntegrationNotice] = useState("");
+  const [targetStudyId, setTargetStudyId] = useState<string | "new">("new");
+  const [targetStudySearch, setTargetStudySearch] = useState("");
   const dashboard = useMemo(() => buildDashboard(data), [data]);
   const analysis = useMemo(() => buildAnalysis(data), [data]);
   const reflexivityDashboard = useMemo(() => ReflexivityDashboardEngine.build(data), [data]);
@@ -121,6 +123,7 @@ export default function ObservatoryApp() {
     const draft = parseObservation(observationText);
     saveObservationDraft(draft);
     setCurrentDraft(draft);
+    setTargetStudyId(suggestStudies(draft, data.studies)[0]?.id ?? "new");
     setIntegrationNotice("");
   }
 
@@ -135,9 +138,15 @@ export default function ObservatoryApp() {
       window.alert("Validez, modifiez ou ignorez chaque proposition avant l'integration.");
       return;
     }
-    const result = integrateObservationDraft(currentDraft);
+    const result = integrateObservationDraft(currentDraft, targetStudyId);
     setCurrentDraft({ ...currentDraft, status: "validated" });
-    setIntegrationNotice(result.warnings.length ? result.warnings.join(" ") : "Observation integree a une etude.");
+    setIntegrationNotice(
+      result.warnings.length
+        ? result.warnings.join(" ")
+        : targetStudyId === "new"
+          ? "Observation integree a une nouvelle etude."
+          : "Observation ajoutee a l'etude existante."
+    );
     setView("followup");
   }
 
@@ -227,9 +236,14 @@ export default function ObservatoryApp() {
               observationText={observationText}
               setObservationText={setObservationText}
               currentDraft={currentDraft}
+              studies={data.studies}
+              targetStudyId={targetStudyId}
+              targetStudySearch={targetStudySearch}
               integrationNotice={integrationNotice}
               analyzeObservation={analyzeObservation}
               updateCurrentDraft={updateCurrentDraft}
+              setTargetStudyId={setTargetStudyId}
+              setTargetStudySearch={setTargetStudySearch}
               validateObservation={validateObservation}
             />
           )}
@@ -288,24 +302,43 @@ function Journal({
   observationText,
   setObservationText,
   currentDraft,
+  studies,
+  targetStudyId,
+  targetStudySearch,
   integrationNotice,
   analyzeObservation,
   updateCurrentDraft,
+  setTargetStudyId,
+  setTargetStudySearch,
   validateObservation
 }: {
   observationText: string;
   setObservationText: (value: string) => void;
   currentDraft: ObservationAnalysisDraft | null;
+  studies: Study[];
+  targetStudyId: string | "new";
+  targetStudySearch: string;
   integrationNotice: string;
   analyzeObservation: () => void;
   updateCurrentDraft: (draft: ObservationAnalysisDraft) => void;
+  setTargetStudyId: (value: string | "new") => void;
+  setTargetStudySearch: (value: string) => void;
   validateObservation: () => void;
 }) {
   return (
     <div className="grid gap-4">
       <ObservationInput value={observationText} onChange={setObservationText} onAnalyze={analyzeObservation} />
       {currentDraft ? (
-        <ObservationAnalysis draft={currentDraft} onChange={updateCurrentDraft} onValidate={validateObservation} />
+        <ObservationAnalysis
+          draft={currentDraft}
+          studies={studies}
+          targetStudyId={targetStudyId}
+          targetStudySearch={targetStudySearch}
+          onTargetStudyChange={setTargetStudyId}
+          onTargetStudySearchChange={setTargetStudySearch}
+          onChange={updateCurrentDraft}
+          onValidate={validateObservation}
+        />
       ) : null}
       {integrationNotice ? (
         <div className="rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
@@ -862,6 +895,30 @@ function hasPendingProposals(draft: ObservationAnalysisDraft) {
     ...draft.detectedConcepts,
     ...draft.relationProposals
   ].some((item) => item.status === "proposed");
+}
+
+function suggestStudies(draft: ObservationAnalysisDraft, studies: Study[]) {
+  const draftTerms = new Set([
+    ...draft.detectedPeople.map((person) => person.label.toLowerCase()),
+    ...draft.detectedConcepts.map((concept) => concept.label.toLowerCase())
+  ]);
+
+  return studies
+    .map((study) => {
+      const studyText = [
+        study.title,
+        study.subject,
+        study.description,
+        ...study.states.flatMap((state) => [...state.confirmedElements, ...state.uncertainElements, ...state.language]),
+        ...study.catalysts.map((catalyst) => catalyst.name),
+        ...study.manifestations.map((manifestation) => manifestation.description)
+      ].join(" ").toLowerCase();
+      const score = [...draftTerms].filter((term) => term && studyText.includes(term)).length;
+      return { study, score };
+    })
+    .filter((item) => item.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .map((item) => item.study);
 }
 
 function RankedList({ items, empty }: { items: Array<{ label: string; value: number | string }>; empty: string }) {

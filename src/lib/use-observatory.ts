@@ -6,7 +6,7 @@ import { demoStudy } from "./demo-data";
 import { repository } from "./repository";
 import type { ObservationAnalysisDraft, ObservatoryData, Study } from "./types";
 import { downloadJson } from "./analytics";
-import { constructScientificStudy } from "./parser/ScientificConstruction";
+import { addObservationToStudy, constructScientificStudy } from "./parser/ScientificConstruction";
 
 export function useObservatory() {
   const [data, setData] = useState<ObservatoryData>({ version: 1, studies: [], observationDrafts: [] });
@@ -120,15 +120,21 @@ export function useObservatory() {
     });
   }
 
-  function integrateObservationDraft(draft: ObservationAnalysisDraft) {
+  function integrateObservationDraft(draft: ObservationAnalysisDraft, targetStudyId: string | "new" = "new") {
     const validatedDraft: ObservationAnalysisDraft = { ...draft, status: "validated" };
-    const result = constructScientificStudy(validatedDraft);
+    const targetStudy = data.studies.find((study) => study.id === targetStudyId);
+    const result = targetStudy
+      ? addObservationToStudy(validatedDraft, targetStudy, data.studies)
+      : constructScientificStudy(validatedDraft);
     setData((current) => {
       const drafts = current.observationDrafts ?? [];
+      const target = current.studies.find((study) => study.id === targetStudyId);
       return {
         ...current,
         observationDrafts: drafts.map((item) => (item.id === draft.id ? validatedDraft : item)),
-        studies: [result.study, ...current.studies]
+        studies: target
+          ? current.studies.map((study) => (study.id === target.id ? result.study : study))
+          : [result.study, ...current.studies]
       };
     });
     setSelectedStudyId(result.study.id);

@@ -2,9 +2,10 @@ import { describe, expect, it } from "vitest";
 import { DeltaEngine } from "../engines/DeltaEngine";
 import { RelationEngine } from "../engines/RelationEngine";
 import { StateDifferenceEngine } from "../engines/StateDifferenceEngine";
-import type { ObservationAnalysisDraft, ObservationProposalStatus } from "../types";
+import { TrajectoryEngine } from "../engines/TrajectoryEngine";
+import type { ObservationAnalysisDraft, ObservationProposalStatus, Study, UnderstandingState } from "../types";
 import { parseObservation } from "./ObservationParser";
-import { constructScientificStudy } from "./ScientificConstruction";
+import { addObservationToStudy, constructScientificStudy } from "./ScientificConstruction";
 
 const demoObservation =
   "Hier, j'ai présenté un nouveau cadre de réflexion à une personne. Aujourd'hui, elle m'a dit qu'elle se sentait perdue depuis la veille. Je ne connais pas encore la raison.";
@@ -137,6 +138,43 @@ describe("ObservationParser", () => {
     expect(result.delta).toEqual(DeltaEngine.calculate(result.stateDifference!));
     expect(RelationEngine.analyze(result.study)).toEqual(result.relationEngineProposals);
   });
+
+  it("adds a validated observation to an existing Study without creating a new Study", () => {
+    const existing = makeStudy("study-existing", "Cadre de reflexion");
+    const draft = validateAll(parseObservation(demoObservation, "2026-07-15T10:00:00.000Z"));
+    const result = addObservationToStudy(draft, existing, [existing], "2026-07-15T10:00:00.000Z");
+
+    expect(result.study.id).toBe(existing.id);
+    expect(result.study.manifestations.length).toBeGreaterThan(existing.manifestations.length);
+    expect(result.study.timeline.length).toBeGreaterThan(existing.timeline.length);
+  });
+
+  it("keeps creating a new Study when no target Study is provided", () => {
+    const draft = validateAll(parseObservation(demoObservation, "2026-07-15T10:00:00.000Z"));
+    const result = constructScientificStudy(draft, "2026-07-15T10:00:00.000Z");
+
+    expect(result.study.id).not.toBe("study-existing");
+    expect(result.study.history).toContain("Creation depuis une observation validee");
+  });
+
+  it("recalculates existing engines after adding an observation to a Study", () => {
+    const existing = makeStudy("study-existing", "Reconnaissance");
+    const peer = makeStudy("study-peer", "Reconnaissance");
+    const draft = validateAll(
+      parseObservation(
+        "Hier, j'ai présenté une idee. Aujourd'hui, il a dit que j'ai compris une nouvelle compréhension et je reformule cette idee.",
+        "2026-07-15T10:00:00.000Z"
+      )
+    );
+    const result = addObservationToStudy(draft, existing, [existing, peer], "2026-07-15T10:00:00.000Z");
+    const sortedStates = result.study.states.slice().sort((left, right) => left.date.localeCompare(right.date));
+    const expectedDifference = StateDifferenceEngine.compare(sortedStates[sortedStates.length - 2], sortedStates[sortedStates.length - 1]);
+
+    expect(result.stateDifference).toEqual(expectedDifference);
+    expect(result.delta).toEqual(DeltaEngine.calculate(expectedDifference));
+    expect(result.relationEngineProposals).toEqual(RelationEngine.analyze(result.study));
+    expect(result.trajectoryComparisons).toEqual(TrajectoryEngine.compare([result.study, peer]));
+  });
 });
 
 function validateAll(draft: ObservationAnalysisDraft): ObservationAnalysisDraft {
@@ -166,4 +204,45 @@ function allProposals(draft: ObservationAnalysisDraft) {
     ...draft.detectedConcepts,
     ...draft.relationProposals
   ];
+}
+
+function makeStudy(id: string, subject: string): Study {
+  const state = makeState(`${id}-state`, "2026-07-14", subject);
+  return {
+    id,
+    title: subject,
+    description: `Etude sur ${subject}`,
+    subject,
+    startDate: "2026-07-14",
+    status: "Observation ouverte",
+    currentLevel: "Observation ouverte",
+    notes: "",
+    states: [state],
+    manifestations: [],
+    transitions: [],
+    recognitions: [],
+    catalysts: [],
+    emotionObservations: [],
+    relations: [],
+    timeline: [],
+    map: { nodes: [], edges: [] },
+    history: [],
+    createdAt: "2026-07-14T00:00:00.000Z",
+    updatedAt: "2026-07-14T00:00:00.000Z"
+  };
+}
+
+function makeState(id: string, date: string, concept: string): UnderstandingState {
+  return {
+    id,
+    title: "Etat initial",
+    date,
+    formulation: concept,
+    stability: 5,
+    confidence: 5,
+    confirmedElements: [concept],
+    uncertainElements: [],
+    language: [concept],
+    associatedBehaviors: []
+  };
 }
