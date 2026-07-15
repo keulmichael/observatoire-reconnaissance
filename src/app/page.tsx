@@ -8,8 +8,10 @@ import {
   BookOpen,
   Brain,
   CalendarDays,
+  ClipboardList,
   Copy,
   Download,
+  Eye,
   GitCompare,
   GitBranch,
   Home,
@@ -34,13 +36,19 @@ import {
   compareStates,
   exportStudy
 } from "@/lib/analytics";
-import type { AppView, Study, TransitionStage } from "@/lib/types";
+import type { AppView, ObservationAnalysisDraft, Study, TransitionStage } from "@/lib/types";
 import { RecognitionCharts } from "@/components/recognition-charts";
+import { ObservationAnalysis } from "@/components/journal/ObservationAnalysis";
+import { ObservationFollowup } from "@/components/journal/ObservationFollowup";
+import { ObservationInput } from "@/components/journal/ObservationInput";
 import { DeltaEngine } from "@/lib/engines/DeltaEngine";
 import { ReflexivityDashboardEngine } from "@/lib/engines/ReflexivityDashboardEngine";
 import { StateDifferenceEngine } from "@/lib/engines/StateDifferenceEngine";
+import { parseObservation } from "@/lib/parser/ObservationParser";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
+  { id: "journal", label: "Journal d'Observation", icon: ClipboardList },
+  { id: "followup", label: "Suivi", icon: Eye },
   { id: "dashboard", label: "Tableau de bord", icon: Home },
   { id: "studies", label: "Études", icon: BookOpen },
   { id: "states", label: "États", icon: Brain },
@@ -90,10 +98,16 @@ export default function ObservatoryApp() {
     resetDemoData,
     importJson,
     exportAll,
-    updateMap
+    updateMap,
+    observationDrafts,
+    saveObservationDraft,
+    integrateObservationDraft
   } = useObservatory();
-  const [view, setView] = useState<AppView>("dashboard");
+  const [view, setView] = useState<AppView>("journal");
   const [query, setQuery] = useState("");
+  const [observationText, setObservationText] = useState("");
+  const [currentDraft, setCurrentDraft] = useState<ObservationAnalysisDraft | null>(null);
+  const [integrationNotice, setIntegrationNotice] = useState("");
   const dashboard = useMemo(() => buildDashboard(data), [data]);
   const analysis = useMemo(() => buildAnalysis(data), [data]);
   const reflexivityDashboard = useMemo(() => ReflexivityDashboardEngine.build(data), [data]);
@@ -102,6 +116,30 @@ export default function ObservatoryApp() {
   const studies = data.studies.filter((study) =>
     `${study.title} ${study.subject} ${study.description}`.toLowerCase().includes(query.toLowerCase())
   );
+
+  function analyzeObservation() {
+    const draft = parseObservation(observationText);
+    saveObservationDraft(draft);
+    setCurrentDraft(draft);
+    setIntegrationNotice("");
+  }
+
+  function updateCurrentDraft(draft: ObservationAnalysisDraft) {
+    setCurrentDraft(draft);
+    saveObservationDraft(draft);
+  }
+
+  function validateObservation() {
+    if (!currentDraft) return;
+    if (hasPendingProposals(currentDraft)) {
+      window.alert("Validez, modifiez ou ignorez chaque proposition avant l'integration.");
+      return;
+    }
+    const result = integrateObservationDraft(currentDraft);
+    setCurrentDraft({ ...currentDraft, status: "validated" });
+    setIntegrationNotice(result.warnings.length ? result.warnings.join(" ") : "Observation integree a une etude.");
+    setView("followup");
+  }
 
   return (
     <main className="min-h-screen px-4 py-4 text-stone-100 md:px-6 lg:px-8">
@@ -120,18 +158,21 @@ export default function ObservatoryApp() {
             {views.map((item) => {
               const Icon = item.icon;
               return (
-                <button
-                  key={item.id}
-                  className={`flex items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition ${
-                    view === item.id
-                      ? "bg-gold/18 text-goldSoft"
-                      : "text-stone-300 hover:bg-white/7 hover:text-white"
-                  }`}
-                  onClick={() => setView(item.id)}
-                >
-                  <Icon aria-hidden className="h-4 w-4" />
-                  {item.label}
-                </button>
+                <div key={item.id}>
+                  {item.id === "journal" ? <p className="mb-1 mt-2 px-3 text-xs uppercase tracking-[0.18em] text-stone-500">Mode Observation</p> : null}
+                  {item.id === "dashboard" ? <p className="mb-1 mt-4 px-3 text-xs uppercase tracking-[0.18em] text-stone-500">Mode Expert</p> : null}
+                  <button
+                    className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition ${
+                      view === item.id
+                        ? "bg-gold/18 text-goldSoft"
+                        : "text-stone-300 hover:bg-white/7 hover:text-white"
+                    }`}
+                    onClick={() => setView(item.id)}
+                  >
+                    <Icon aria-hidden className="h-4 w-4" />
+                    {item.label}
+                  </button>
+                </div>
               );
             })}
           </nav>
@@ -181,6 +222,18 @@ export default function ObservatoryApp() {
             </div>
           </header>
 
+          {view === "journal" && (
+            <Journal
+              observationText={observationText}
+              setObservationText={setObservationText}
+              currentDraft={currentDraft}
+              integrationNotice={integrationNotice}
+              analyzeObservation={analyzeObservation}
+              updateCurrentDraft={updateCurrentDraft}
+              validateObservation={validateObservation}
+            />
+          )}
+          {view === "followup" && <ObservationFollowup drafts={observationDrafts} studies={data.studies} />}
           {view === "dashboard" && <Dashboard dashboard={dashboard} studies={studies} selectStudy={selectStudy} setView={setView} />}
           {view === "studies" && (
             <Studies
@@ -228,6 +281,38 @@ export default function ObservatoryApp() {
         </aside>
       </div>
     </main>
+  );
+}
+
+function Journal({
+  observationText,
+  setObservationText,
+  currentDraft,
+  integrationNotice,
+  analyzeObservation,
+  updateCurrentDraft,
+  validateObservation
+}: {
+  observationText: string;
+  setObservationText: (value: string) => void;
+  currentDraft: ObservationAnalysisDraft | null;
+  integrationNotice: string;
+  analyzeObservation: () => void;
+  updateCurrentDraft: (draft: ObservationAnalysisDraft) => void;
+  validateObservation: () => void;
+}) {
+  return (
+    <div className="grid gap-4">
+      <ObservationInput value={observationText} onChange={setObservationText} onAnalyze={analyzeObservation} />
+      {currentDraft ? (
+        <ObservationAnalysis draft={currentDraft} onChange={updateCurrentDraft} onValidate={validateObservation} />
+      ) : null}
+      {integrationNotice ? (
+        <div className="rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
+          {integrationNotice}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -766,6 +851,17 @@ function differenceColor(kind: string) {
   if (kind === "removal" || kind === "potential-contradiction") return "border-red-400/35 bg-red-400/10";
   if (kind === "stabilization") return "border-sky-400/35 bg-sky-400/10";
   return "border-white/10 bg-white/[0.04]";
+}
+
+function hasPendingProposals(draft: ObservationAnalysisDraft) {
+  return [
+    ...draft.detectedPeople,
+    ...draft.detectedManifestations,
+    ...draft.detectedEmotions,
+    ...draft.detectedCatalysts,
+    ...draft.detectedConcepts,
+    ...draft.relationProposals
+  ].some((item) => item.status === "proposed");
 }
 
 function RankedList({ items, empty }: { items: Array<{ label: string; value: number | string }>; empty: string }) {

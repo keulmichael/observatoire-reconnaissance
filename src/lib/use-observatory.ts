@@ -4,11 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { demoStudy } from "./demo-data";
 import { repository } from "./repository";
-import type { ObservatoryData, Study } from "./types";
+import type { ObservationAnalysisDraft, ObservatoryData, Study } from "./types";
 import { downloadJson } from "./analytics";
+import { constructScientificStudy } from "./parser/ScientificConstruction";
 
 export function useObservatory() {
-  const [data, setData] = useState<ObservatoryData>({ version: 1, studies: [] });
+  const [data, setData] = useState<ObservatoryData>({ version: 1, studies: [], observationDrafts: [] });
   const [selectedStudyId, setSelectedStudyId] = useState("");
 
   useEffect(() => {
@@ -88,7 +89,7 @@ export function useObservatory() {
       const text = await file.text();
       const parsed = JSON.parse(text) as ObservatoryData | Study;
       if ("studies" in parsed) {
-        setData(parsed);
+        setData({ ...parsed, observationDrafts: parsed.observationDrafts ?? [] });
         setSelectedStudyId(parsed.studies[0]?.id ?? "");
       } else {
         setData((current) => ({ ...current, studies: [parsed, ...current.studies] }));
@@ -108,6 +109,32 @@ export function useObservatory() {
     updateStudy({ ...selectedStudy, map: { nodes, edges } });
   }
 
+  function saveObservationDraft(draft: ObservationAnalysisDraft) {
+    setData((current) => {
+      const drafts = current.observationDrafts ?? [];
+      const exists = drafts.some((item) => item.id === draft.id);
+      return {
+        ...current,
+        observationDrafts: exists ? drafts.map((item) => (item.id === draft.id ? draft : item)) : [draft, ...drafts]
+      };
+    });
+  }
+
+  function integrateObservationDraft(draft: ObservationAnalysisDraft) {
+    const validatedDraft: ObservationAnalysisDraft = { ...draft, status: "validated" };
+    const result = constructScientificStudy(validatedDraft);
+    setData((current) => {
+      const drafts = current.observationDrafts ?? [];
+      return {
+        ...current,
+        observationDrafts: drafts.map((item) => (item.id === draft.id ? validatedDraft : item)),
+        studies: [result.study, ...current.studies]
+      };
+    });
+    setSelectedStudyId(result.study.id);
+    return result;
+  }
+
   return {
     data,
     selectedStudyId,
@@ -120,6 +147,9 @@ export function useObservatory() {
     resetDemoData,
     importJson,
     exportAll,
-    updateMap
+    updateMap,
+    observationDrafts: data.observationDrafts ?? [],
+    saveObservationDraft,
+    integrateObservationDraft
   };
 }

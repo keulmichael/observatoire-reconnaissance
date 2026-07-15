@@ -1,6 +1,8 @@
 import type { Edge, Node } from "@xyflow/react";
 
 export type AppView =
+  | "journal"
+  | "followup"
   | "dashboard"
   | "studies"
   | "states"
@@ -176,6 +178,89 @@ export interface ReflexiveMapData {
 export interface ObservatoryData {
   version: 1;
   studies: Study[];
+  observationDrafts?: ObservationAnalysisDraft[];
+}
+
+export type ObservationDraftStatus = "draft" | "reviewed" | "validated" | "rejected";
+export type ObservationProposalStatus = "proposed" | "accepted" | "edited" | "rejected";
+export type TemporalPrecision = "date explicite" | "date relative" | "ordre narratif" | "date inconnue";
+export type ObservationMethodStatus =
+  | "Observation ouverte"
+  | "Donnees insuffisantes"
+  | "Transition possible"
+  | "Reconnaissance formulee"
+  | "Stabilisation a verifier"
+  | "Transformation durable confirmee";
+
+export interface ObservationProposalBase {
+  id: string;
+  label: string;
+  sourceExcerpt: string;
+  confidence: number;
+  status: ObservationProposalStatus;
+  reason: string;
+  provenance: string[];
+}
+
+export interface DetectedPerson extends ObservationProposalBase {
+  entityText: string;
+}
+
+export interface DetectedManifestation extends ObservationProposalBase {
+  kind: "presentation" | "message" | "discussion" | "rencontre" | "lecture" | "decision" | "declaration" | "evenement";
+  dateHint?: string;
+}
+
+export interface DetectedEmotion extends ObservationProposalBase {
+  emotion: string;
+  expressionKind: "exprimee directement" | "attribuee par le narrateur" | "supposee";
+  sourceKind: "citation" | "discours rapporte" | "narration" | "inconnue";
+}
+
+export interface DetectedCatalyst extends ObservationProposalBase {
+  catalystType: Catalyst["type"];
+}
+
+export interface DetectedConcept extends ObservationProposalBase {
+  concept: string;
+}
+
+export interface ObservationChronologyEntry {
+  id: string;
+  label: string;
+  sourceExcerpt: string;
+  order: number;
+  phase: "Avant" | "Pendant" | "Apres" | "Ordre narratif";
+  temporalMarker: string;
+  precision: TemporalPrecision;
+  status: ObservationProposalStatus;
+  reason: string;
+  provenance: string[];
+}
+
+export interface ObservationRelationProposal extends ObservationProposalBase {
+  sourceA: string;
+  sourceB: string;
+  relationType: "relation temporelle" | "relation possible";
+  initialStatus: "hypothese";
+}
+
+export interface ObservationAnalysisDraft {
+  id: string;
+  rawText: string;
+  detectedPeople: DetectedPerson[];
+  detectedManifestations: DetectedManifestation[];
+  detectedEmotions: DetectedEmotion[];
+  detectedCatalysts: DetectedCatalyst[];
+  detectedConcepts: DetectedConcept[];
+  chronology: ObservationChronologyEntry[];
+  relationProposals: ObservationRelationProposal[];
+  confirmationQuestions: string[];
+  analysisWarnings: string[];
+  createdAt: string;
+  status: ObservationDraftStatus;
+  methodologicalStatus: ObservationMethodStatus;
+  conclusion: string;
 }
 
 export type ScientificLabel =

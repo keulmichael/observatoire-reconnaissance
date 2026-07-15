@@ -12,7 +12,8 @@ export const repository = {
       return demoData;
     }
     try {
-      return JSON.parse(raw) as ObservatoryData;
+      const parsed = JSON.parse(raw) as ObservatoryData;
+      return { ...parsed, observationDrafts: parsed.observationDrafts ?? [] };
     } catch {
       this.save(demoData);
       return demoData;
