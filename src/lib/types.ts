@@ -18,6 +18,7 @@ export type AppView =
   | "analysis";
 
 export type ConfirmationLevel = 1 | 2 | 3;
+export type ValidationStatus = "a valider" | "valide" | "conteste" | "revision demandee";
 export type RelationStatus = "observée" | "supposée" | "confirmée" | "invalidée";
 export type TransitionStage =
   | "État initial"
@@ -48,6 +49,11 @@ export interface Study {
   timeline: TimelineEvent[];
   map: ReflexiveMapData;
   history: string[];
+  observations?: ObservationRecord[];
+  openQuestions?: OpenQuestion[];
+  structuredHistory?: HistoryEntry[];
+  relationProposals?: PersistentRelationProposal[];
+  deltaScores?: PersistentDeltaScore[];
   createdAt: string;
   updatedAt: string;
 }
@@ -63,6 +69,15 @@ export interface UnderstandingState {
   uncertainElements: string[];
   language: string[];
   associatedBehaviors: string[];
+  sourceObservationIds?: string[];
+  sourceExcerpt?: string;
+  validatedProposalIds?: string[];
+  engineProvenance?: string[];
+  createdFromObservationAt?: string;
+  confidenceScore?: number;
+  methodologicalStatus?: string;
+  validationStatus?: ValidationStatus;
+  userComments?: string[];
 }
 
 export interface Transition {
@@ -80,6 +95,15 @@ export interface Transition {
   observableImpact: string;
   transmissionCapacity: string;
   date: string;
+  sourceObservationIds?: string[];
+  sourceExcerpt?: string;
+  validatedProposalIds?: string[];
+  engineProvenance?: string[];
+  createdFromObservationAt?: string;
+  confidence?: number;
+  methodologicalStatus?: string;
+  deltaScoreId?: string;
+  explanation?: string;
 }
 
 export interface Manifestation {
@@ -88,6 +112,13 @@ export interface Manifestation {
   date: string;
   description: string;
   evidenceLevel: ConfirmationLevel;
+  sourceObservationIds?: string[];
+  sourceExcerpt?: string;
+  validatedProposalIds?: string[];
+  engineProvenance?: string[];
+  createdFromObservationAt?: string;
+  confidence?: number;
+  methodologicalStatus?: string;
 }
 
 export interface Relation {
@@ -100,6 +131,13 @@ export interface Relation {
   evidenceLevel: ConfirmationLevel;
   note: string;
   status: RelationStatus;
+  sourceObservationIds?: string[];
+  sourceExcerpt?: string;
+  validatedProposalIds?: string[];
+  engineProvenance?: string[];
+  createdFromObservationAt?: string;
+  confidence?: number;
+  methodologicalStatus?: string;
 }
 
 export interface EmotionObservation {
@@ -111,6 +149,13 @@ export interface EmotionObservation {
   transitionId?: string;
   duration: string;
   comment: string;
+  sourceObservationIds?: string[];
+  sourceExcerpt?: string;
+  validatedProposalIds?: string[];
+  engineProvenance?: string[];
+  createdFromObservationAt?: string;
+  confidence?: number;
+  methodologicalStatus?: string;
 }
 
 export interface Catalyst {
@@ -136,6 +181,13 @@ export interface Catalyst {
   frequency: number;
   averageImpact: number;
   confirmationLevel: ConfirmationLevel;
+  sourceObservationIds?: string[];
+  sourceExcerpt?: string;
+  validatedProposalIds?: string[];
+  engineProvenance?: string[];
+  createdFromObservationAt?: string;
+  confidence?: number;
+  methodologicalStatus?: string;
 }
 
 export interface Recognition {
@@ -159,6 +211,13 @@ export interface Recognition {
   confirmed: boolean;
   stableOverTime: boolean;
   confirmationLevel: ConfirmationLevel;
+  sourceObservationIds?: string[];
+  sourceExcerpt?: string;
+  validatedProposalIds?: string[];
+  engineProvenance?: string[];
+  createdFromObservationAt?: string;
+  confidence?: number;
+  methodologicalStatus?: string;
 }
 
 export interface TimelineEvent {
@@ -168,6 +227,13 @@ export interface TimelineEvent {
   date: string;
   summary: string;
   inDeltaPath: boolean;
+  sourceObservationIds?: string[];
+  sourceExcerpt?: string;
+  validatedProposalIds?: string[];
+  engineProvenance?: string[];
+  createdFromObservationAt?: string;
+  confidence?: number;
+  methodologicalStatus?: string;
 }
 
 export interface ReflexiveMapData {
@@ -177,6 +243,7 @@ export interface ReflexiveMapData {
 
 export interface ObservatoryData {
   version: 1;
+  schemaVersion?: 2;
   studies: Study[];
   observationDrafts?: ObservationAnalysisDraft[];
 }
@@ -261,6 +328,93 @@ export interface ObservationAnalysisDraft {
   status: ObservationDraftStatus;
   methodologicalStatus: ObservationMethodStatus;
   conclusion: string;
+}
+
+export type ObservationRecordStatus = "active" | "archived" | "deleted";
+export type OpenQuestionStatus = "ouverte" | "repondue" | "abandonnee";
+
+export interface ValidationHistoryEntry {
+  id: string;
+  date: string;
+  action: "proposition acceptee" | "proposition modifiee" | "proposition rejetee" | "observation validee";
+  proposalId?: string;
+  summary: string;
+}
+
+export interface ObservationRecord {
+  id: string;
+  studyId: string;
+  rawText: string;
+  createdAt: string;
+  updatedAt: string;
+  status: ObservationRecordStatus;
+  authorLabel?: string;
+  detectedPeople: DetectedPerson[];
+  detectedManifestations: DetectedManifestation[];
+  detectedEmotions: DetectedEmotion[];
+  detectedCatalysts: DetectedCatalyst[];
+  detectedConcepts: DetectedConcept[];
+  detectedRelations: ObservationRelationProposal[];
+  acceptedProposalIds: string[];
+  editedProposalIds: string[];
+  rejectedProposalIds: string[];
+  validationHistory: ValidationHistoryEntry[];
+  generatedManifestationIds: string[];
+  generatedEmotionIds: string[];
+  generatedCatalystIds: string[];
+  generatedRelationIds: string[];
+  generatedStateIds: string[];
+  generatedTransitionIds: string[];
+  generatedRecognitionIds: string[];
+  generatedTimelineEventIds: string[];
+  generatedDeltaIds: string[];
+  enginesExecuted: string[];
+  engineResultsSummary: string[];
+  methodologicalWarnings: string[];
+  sourceExcerpts: string[];
+  openQuestions: OpenQuestion[];
+}
+
+export interface OpenQuestion {
+  id: string;
+  studyId: string;
+  sourceObservationIds: string[];
+  text: string;
+  status: OpenQuestionStatus;
+  answer?: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+export interface HistoryEntry {
+  id: string;
+  date: string;
+  actionType:
+    | "observation creee"
+    | "observation modifiee"
+    | "proposition acceptee"
+    | "proposition rejetee"
+    | "etat genere"
+    | "etat valide"
+    | "transition generee"
+    | "delta calcule"
+    | "relation validee"
+    | "import"
+    | "suppression"
+    | "restauration"
+    | "export";
+  objectType: string;
+  objectId: string;
+  sourceObservationIds?: string[];
+  summary: string;
+}
+
+export interface PersistentRelationProposal extends ObservationRelationProposal {
+  studyId: string;
+  sourceObservationIds: string[];
+  engine: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export type ScientificLabel =
@@ -369,6 +523,26 @@ export interface DeltaScore {
   neutralFactors: DeltaFactor[];
   limits: string[];
   interpretation: "variation observable" | "variation nulle ou stable" | "indicateurs insuffisants";
+}
+
+export interface PersistentDeltaScore {
+  id: string;
+  transitionId: string;
+  sourceObservationIds: string[];
+  rawScore: number;
+  positiveFactors: DeltaFactor[];
+  negativeFactors: DeltaFactor[];
+  neutralFactors: DeltaFactor[];
+  missingData: string[];
+  limitations: string[];
+  calculatedAt: string;
+  engineVersion: string;
+  interpretationLabel:
+    | "Variation faible observée"
+    | "Variation modérée observée"
+    | "Variation importante observée"
+    | "Données insuffisantes"
+    | "Calcul non disponible";
 }
 
 export interface RelationProposal {

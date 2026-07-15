@@ -2,11 +2,11 @@
 
 import { useEffect, useMemo, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
-import { demoStudy } from "./demo-data";
 import { repository } from "./repository";
 import type { ObservationAnalysisDraft, ObservatoryData, Study } from "./types";
 import { downloadJson } from "./analytics";
 import { addObservationToStudy, constructScientificStudy } from "./parser/ScientificConstruction";
+import { migrateObservatoryData, normalizeStudy } from "./data-migration";
 
 export function useObservatory() {
   const [data, setData] = useState<ObservatoryData>({ version: 1, studies: [], observationDrafts: [] });
@@ -39,14 +39,29 @@ export function useObservatory() {
   function createStudy() {
     const createdAt = new Date().toISOString();
     const study: Study = {
-      ...demoStudy,
       id: `study-${crypto.randomUUID()}`,
       title: "Nouvelle étude d'observation",
       description: "Décrire le parcours d'observation.",
       subject: "Sujet à documenter",
       startDate: createdAt.slice(0, 10),
+      status: "Observation ouverte",
+      currentLevel: "Observation ouverte",
       notes: "",
+      states: [],
+      manifestations: [],
+      transitions: [],
+      recognitions: [],
+      catalysts: [],
+      emotionObservations: [],
+      relations: [],
+      timeline: [],
+      map: { nodes: [], edges: [] },
       history: ["Création de l'étude"],
+      observations: [],
+      openQuestions: [],
+      structuredHistory: [],
+      relationProposals: [],
+      deltaScores: [],
       createdAt,
       updatedAt: createdAt
     };
@@ -89,10 +104,11 @@ export function useObservatory() {
       const text = await file.text();
       const parsed = JSON.parse(text) as ObservatoryData | Study;
       if ("studies" in parsed) {
-        setData({ ...parsed, observationDrafts: parsed.observationDrafts ?? [] });
-        setSelectedStudyId(parsed.studies[0]?.id ?? "");
+        const migrated = migrateObservatoryData(parsed);
+        setData(migrated);
+        setSelectedStudyId(migrated.studies[0]?.id ?? "");
       } else {
-        setData((current) => ({ ...current, studies: [parsed, ...current.studies] }));
+        setData((current) => ({ ...current, studies: [normalizeStudy(parsed), ...current.studies] }));
         setSelectedStudyId(parsed.id);
       }
     } catch {

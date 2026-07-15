@@ -186,6 +186,11 @@ export function ReflexiveMap({
                   ))}
                 </select>
               </label>
+              <div className="md:col-span-2 rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-300">
+                <p><span className="text-stone-500">Observation source :</span> {String(selected.data?.sourceObservationId ?? "Non renseignee")}</p>
+                <p className="mt-1"><span className="text-stone-500">Extrait :</span> {String(selected.data?.sourceExcerpt ?? "Non renseigne")}</p>
+                <p className="mt-1"><span className="text-stone-500">Statut :</span> donnees validees ou ajoutees manuellement selon provenance du noeud.</p>
+              </div>
             </div>
           ) : (
             <p className="text-sm text-stone-400">Sélectionnez un nœud pour modifier son type ou son libellé.</p>

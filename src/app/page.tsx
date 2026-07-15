@@ -44,6 +44,7 @@ import { ObservationInput } from "@/components/journal/ObservationInput";
 import { DeltaEngine } from "@/lib/engines/DeltaEngine";
 import { ReflexivityDashboardEngine } from "@/lib/engines/ReflexivityDashboardEngine";
 import { StateDifferenceEngine } from "@/lib/engines/StateDifferenceEngine";
+import { TrajectoryEngine } from "@/lib/engines/TrajectoryEngine";
 import { parseObservation } from "@/lib/parser/ObservationParser";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
@@ -147,7 +148,7 @@ export default function ObservatoryApp() {
           ? "Observation integree a une nouvelle etude."
           : "Observation ajoutee a l'etude existante."
     );
-    setView("followup");
+    setView("studies");
   }
 
   return (
@@ -230,6 +231,16 @@ export default function ObservatoryApp() {
               </div>
             </div>
           </header>
+          {query.trim() ? (
+            <GlobalSearchResults
+              query={query}
+              data={data}
+              onOpenStudy={(studyId) => {
+                selectStudy(studyId);
+                setView("studies");
+              }}
+            />
+          ) : null}
 
           {view === "journal" && (
             <Journal
@@ -247,7 +258,7 @@ export default function ObservatoryApp() {
               validateObservation={validateObservation}
             />
           )}
-          {view === "followup" && <ObservationFollowup drafts={observationDrafts} studies={data.studies} />}
+          {view === "followup" && <ObservationFollowup drafts={observationDrafts} study={selectedStudy} />}
           {view === "dashboard" && <Dashboard dashboard={dashboard} studies={studies} selectStudy={selectStudy} setView={setView} />}
           {view === "studies" && (
             <Studies
@@ -411,6 +422,502 @@ function Dashboard({
   );
 }
 
+function GlobalSearchResults({
+  query,
+  data,
+  onOpenStudy
+}: {
+  query: string;
+  data: ReturnType<typeof useObservatory>["data"];
+  onOpenStudy: (studyId: string) => void;
+}) {
+  const results = data.studies.flatMap((study) => searchStudy(study, query));
+  if (!results.length) return null;
+  return (
+    <Panel title="Recherche globale">
+      <div className="grid gap-2">
+        {results.slice(0, 12).map((result) => (
+          <button
+            key={`${result.studyId}-${result.type}-${result.id}`}
+            className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-left transition hover:border-gold/35"
+            onClick={() => onOpenStudy(result.studyId)}
+          >
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="font-medium text-white">{result.label}</p>
+              <Badge>{result.type}</Badge>
+            </div>
+            <p className="mt-1 text-sm leading-6 text-stone-400">{result.detail}</p>
+          </button>
+        ))}
+      </div>
+    </Panel>
+  );
+}
+
+function searchStudy(study: Study, query: string) {
+  const normalized = query.toLowerCase();
+  const entries = [
+    { type: "etude", id: study.id, label: study.title, detail: `${study.subject} ${study.description}` },
+    ...(study.observations ?? []).map((item) => ({ type: "observation", id: item.id, label: item.rawText.slice(0, 80), detail: item.sourceExcerpts.join(" ") })),
+    ...study.states.map((item) => ({ type: "etat", id: item.id, label: item.title, detail: item.formulation })),
+    ...study.transitions.map((item) => ({ type: "transition", id: item.id, label: item.title, detail: item.explanation ?? item.observableImpact })),
+    ...study.emotionObservations.map((item) => ({ type: "emotion", id: item.id, label: item.emotion, detail: item.context })),
+    ...study.catalysts.map((item) => ({ type: "catalyseur", id: item.id, label: item.name, detail: item.context })),
+    ...study.relations.map((item) => ({ type: "relation", id: item.id, label: `${item.source} -> ${item.target}`, detail: item.note })),
+    ...study.recognitions.map((item) => ({ type: "reconnaissance", id: item.id, label: item.title, detail: item.exactWording })),
+    ...(study.openQuestions ?? []).map((item) => ({ type: "question", id: item.id, label: item.text, detail: item.answer ?? item.status }))
+  ];
+  return entries
+    .filter((entry) => `${entry.label} ${entry.detail}`.toLowerCase().includes(normalized))
+    .map((entry) => ({ ...entry, studyId: study.id }));
+}
+
+const studyTabs = [
+  { id: "overview", label: "Vue d'ensemble" },
+  { id: "journal", label: "Journal" },
+  { id: "timeline", label: "Chronologie" },
+  { id: "objects", label: "Objets" },
+  { id: "states", label: "Etats" },
+  { id: "comparisons", label: "Comparaisons" },
+  { id: "transitions", label: "Transitions" },
+  { id: "delta", label: "Delta" },
+  { id: "recognitions", label: "Reconnaissances" },
+  { id: "trajectories", label: "Trajectoires" },
+  { id: "questions", label: "Questions" },
+  { id: "stats", label: "Statistiques" },
+  { id: "history", label: "Historique" },
+  { id: "export", label: "Export / import" }
+];
+
+function StudyOverview({ study }: { study: Study }) {
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Observations" value={study.observations?.length ?? 0} />
+        <StatCard label="Etats" value={study.states.length} />
+        <StatCard label="Transitions" value={study.transitions.length} />
+        <StatCard label="Questions ouvertes" value={(study.openQuestions ?? []).filter((question) => question.status === "ouverte").length} />
+      </div>
+      <Panel title="Parcours de l'etude">
+        <p className="text-sm leading-6 text-stone-300">
+          Cette page regroupe le journal, les objets generes, les etats, les transitions, Delta et les sources. Chaque resultat doit pouvoir etre relie a une observation.
+        </p>
+        <TraceabilityHelp />
+      </Panel>
+    </div>
+  );
+}
+
+function StudyJournal({
+  study,
+  observations,
+  query,
+  sort,
+  onQueryChange,
+  onSortChange,
+  onEdit,
+  onArchive
+}: {
+  study: Study;
+  observations: NonNullable<Study["observations"]>;
+  query: string;
+  sort: "desc" | "asc";
+  onQueryChange: (value: string) => void;
+  onSortChange: (value: "desc" | "asc") => void;
+  onEdit: (id: string, rawText: string) => void;
+  onArchive: (id: string) => void;
+}) {
+  return (
+    <Panel title="Journal permanent des observations">
+      <div className="mb-4 grid gap-3 md:grid-cols-[1fr_180px]">
+        <input
+          className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+          placeholder="Rechercher dans les observations et extraits"
+          value={query}
+          onChange={(event) => onQueryChange(event.target.value)}
+        />
+        <select
+          className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+          value={sort}
+          onChange={(event) => onSortChange(event.target.value as "desc" | "asc")}
+        >
+          <option className="bg-ink" value="desc">Plus recentes</option>
+          <option className="bg-ink" value="asc">Plus anciennes</option>
+        </select>
+      </div>
+      {observations.length ? (
+        <div className="grid gap-3">
+          {observations.map((observation) => (
+            <div key={observation.id} className={`rounded-md border p-4 ${observation.status === "archived" ? "border-red-400/30 bg-red-400/10" : "border-white/10 bg-white/[0.04]"}`}>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-sm text-stone-400">{observation.createdAt}</p>
+                <Badge>{observation.status}</Badge>
+              </div>
+              <textarea
+                className="mt-3 min-h-24 w-full rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm leading-6 text-white"
+                value={observation.rawText}
+                onChange={(event) => onEdit(observation.id, event.target.value)}
+              />
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <TraceBlock title="Extraits sources" items={observation.sourceExcerpts} />
+                <TraceBlock title="Objets generes" items={[
+                  ...observation.generatedManifestationIds,
+                  ...observation.generatedEmotionIds,
+                  ...observation.generatedCatalystIds,
+                  ...observation.generatedRelationIds,
+                  ...observation.generatedStateIds,
+                  ...observation.generatedTransitionIds,
+                  ...observation.generatedDeltaIds
+                ]} />
+              </div>
+              <ObservationImpact observationId={observation.id} study={study} />
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-200" onClick={() => onArchive(observation.id)}>
+                  Archiver
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <SmartEmpty text="Cette etude ne contient encore aucune observation validee. Ajoutez une observation depuis le Journal pour commencer." />
+      )}
+    </Panel>
+  );
+}
+
+function ObservationImpact({ observationId, study }: { observationId: string; study: Study }) {
+  const states = study.states.filter((item) => item.sourceObservationIds?.includes(observationId));
+  const transitions = study.transitions.filter((item) => item.sourceObservationIds?.includes(observationId));
+  const deltas = (study.deltaScores ?? []).filter((item) => item.sourceObservationIds.includes(observationId));
+  return (
+    <div className="mt-3 rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
+      Ce que cette observation a change : {states.length} etat(s), {transitions.length} transition(s), {deltas.length} Delta(s). {states.length || transitions.length || deltas.length ? "" : "Aucune transition complete n'a ete creee, car les donnees restent insuffisantes."}
+    </div>
+  );
+}
+
+function StudyObjects({ study, updateStudy }: { study: Study; updateStudy: (study: Study) => void }) {
+  function updateRelationProposal(id: string, status: "accepted" | "rejected") {
+    const proposal = (study.relationProposals ?? []).find((item) => item.id === id);
+    if (!proposal) return;
+    const relation = status === "accepted"
+      ? {
+          id: `relation-${crypto.randomUUID()}`,
+          source: proposal.sourceA,
+          target: proposal.sourceB,
+          type: proposal.relationType,
+          strength: Math.round(proposal.confidence * 100),
+          date: new Date().toISOString().slice(0, 10),
+          evidenceLevel: 1 as const,
+          note: proposal.reason,
+          status: "confirmée" as const,
+          sourceObservationIds: proposal.sourceObservationIds,
+          sourceExcerpt: proposal.sourceExcerpt,
+          validatedProposalIds: [proposal.id],
+          engineProvenance: [proposal.engine],
+          createdFromObservationAt: proposal.createdAt,
+          confidence: proposal.confidence,
+          methodologicalStatus: "Relation validee par l'utilisateur"
+        }
+      : null;
+    updateStudy({
+      ...study,
+      relationProposals: (study.relationProposals ?? []).map((item) =>
+        item.id === id ? { ...item, status, updatedAt: new Date().toISOString() } : item
+      ),
+      relations: relation ? [...study.relations, relation] : study.relations,
+      structuredHistory: [
+        ...(study.structuredHistory ?? []),
+        {
+          id: `history-${crypto.randomUUID()}`,
+          date: new Date().toISOString(),
+          actionType: status === "accepted" ? "relation validee" : "proposition rejetee",
+          objectType: "PersistentRelationProposal",
+          objectId: proposal.id,
+          sourceObservationIds: proposal.sourceObservationIds,
+          summary: status === "accepted" ? "Relation proposee acceptee." : "Relation proposee rejetee et conservee."
+        }
+      ]
+    });
+  }
+  return (
+    <div className="grid gap-4">
+      <Panel title="Manifestations"><ObjectList items={study.manifestations.map((item) => ({ id: item.id, label: item.title, source: item.sourceExcerpt }))} /></Panel>
+      <Panel title="Concepts"><TagBlock title="Concepts detectes" items={[...new Set((study.observations ?? []).flatMap((observation) => observation.detectedConcepts.map((concept) => concept.label)))]} /></Panel>
+      <Panel title="Emotions"><ObjectList items={study.emotionObservations.map((item) => ({ id: item.id, label: item.emotion, source: item.sourceExcerpt ?? item.context }))} /></Panel>
+      <Panel title="Catalyseurs"><ObjectList items={study.catalysts.map((item) => ({ id: item.id, label: item.name, source: item.sourceExcerpt ?? item.context }))} /></Panel>
+      <Panel title="Relations"><ObjectList items={study.relations.map((item) => ({ id: item.id, label: `${item.source} -> ${item.target}`, source: item.sourceExcerpt ?? item.note }))} /></Panel>
+      <Panel title="Relations a examiner">
+        {(study.relationProposals ?? []).length ? (
+          <div className="grid gap-2">
+            {(study.relationProposals ?? []).map((item) => (
+              <div key={item.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-white">{item.label}</p>
+                  <Badge>{item.status}</Badge>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-stone-300">{item.reason}</p>
+                <p className="mt-1 text-xs text-stone-500">{item.sourceExcerpt}</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={() => updateRelationProposal(item.id, "accepted")}>
+                    Accepter
+                  </button>
+                  <button className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => updateRelationProposal(item.id, "rejected")}>
+                    Rejeter
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <SmartEmpty text="Aucune relation a examiner." />
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function StudyStates({ study, updateStudy }: { study: Study; updateStudy: (study: Study) => void }) {
+  if (!study.states.length) return <SmartEmpty text="Cette etude ne contient encore aucun etat. Les etats sont generes automatiquement apres observations suffisantes." />;
+  function updateState(id: string, patch: Partial<Study["states"][number]>) {
+    updateStudy({
+      ...study,
+      states: study.states.map((state) => (state.id === id ? { ...state, ...patch } : state))
+    });
+  }
+  return (
+    <div className="grid gap-4">
+      {study.states.map((state) => (
+        <Panel key={state.id} title={state.title}>
+          <p className="text-sm text-stone-400">{state.date}</p>
+          <p className="mt-3 leading-7 text-stone-100">{state.formulation}</p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-3">
+            <StatCard label="Stabilite" value={`${state.stability}/10`} />
+            <StatCard label="Confiance" value={`${state.confidence}/10`} />
+            <StatCard label="Validation" value={state.validationStatus ?? "a valider"} />
+          </div>
+          <TagBlock title="Concepts" items={[...state.confirmedElements, ...state.uncertainElements]} />
+          <TagBlock title="Langage / emotions" items={state.language} />
+          <TagBlock title="Decisions / comportements" items={state.associatedBehaviors} />
+          <TraceBlock title="Observations sources" items={state.sourceObservationIds ?? []} />
+          <TraceBlock title="Extrait source" items={state.sourceExcerpt ? [state.sourceExcerpt] : []} />
+          <div className="mt-4 flex flex-wrap gap-2">
+            {(["valide", "conteste", "revision demandee"] as const).map((status) => (
+              <button key={status} className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => updateState(state.id, { validationStatus: status })}>
+                {status}
+              </button>
+            ))}
+          </div>
+          <textarea
+            className="mt-3 min-h-20 w-full rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+            placeholder="Commentaire utilisateur"
+            value={(state.userComments ?? []).join("\n")}
+            onChange={(event) => updateState(state.id, { userComments: event.target.value.split("\n").filter(Boolean) })}
+          />
+        </Panel>
+      ))}
+    </div>
+  );
+}
+
+function StudyTransitions({ study }: { study: Study }) {
+  if (!study.transitions.length) return <SmartEmpty text="Aucune transition complete. Une transition necessite deux etats suffisamment documentes." />;
+  return (
+    <div className="grid gap-4">
+      {study.transitions.map((transition) => {
+        const delta = (study.deltaScores ?? []).find((item) => item.id === transition.deltaScoreId);
+        return (
+          <Panel key={transition.id} title={transition.title}>
+            <p className="text-sm leading-6 text-stone-300">{transition.explanation ?? "Transition generee depuis les observations validees."}</p>
+            <div className="mt-3 grid gap-3 md:grid-cols-3">
+              <StatCard label="Etat depart" value={transition.fromStateId} />
+              <StatCard label="Etat arrivee" value={transition.toStateId} />
+              <StatCard label="Delta" value={delta?.interpretationLabel ?? "Calcul non disponible"} />
+            </div>
+            <TagBlock title="Manifestations" items={transition.triggeringManifestations} />
+            <TagBlock title="Relations" items={transition.newRelations} />
+            <TagBlock title="Emotions" items={transition.emotions} />
+            <TagBlock title="Catalyseurs" items={transition.catalysts} />
+            <TraceBlock title="Sources" items={transition.sourceObservationIds ?? []} />
+            {delta ? <DeltaDetails delta={delta} /> : <SmartEmpty text="Delta necessite deux etats valides." />}
+          </Panel>
+        );
+      })}
+    </div>
+  );
+}
+
+function StudyDelta({ study }: { study: Study }) {
+  const deltas = study.deltaScores ?? [];
+  if (!deltas.length) return <SmartEmpty text="Delta necessite une transition entre deux etats suffisamment documentes." />;
+  return (
+    <div className="grid gap-4">
+      {deltas.map((delta) => (
+        <Panel key={delta.id} title={delta.interpretationLabel}>
+          <DeltaDetails delta={delta} />
+        </Panel>
+      ))}
+    </div>
+  );
+}
+
+function DeltaDetails({ delta }: { delta: NonNullable<Study["deltaScores"]>[number] }) {
+  return (
+    <div className="mt-4 grid gap-3">
+      <div className="grid gap-3 md:grid-cols-4">
+        <StatCard label="Score brut" value={delta.rawScore} />
+        <StatCard label="Facteurs positifs" value={delta.positiveFactors.length} />
+        <StatCard label="Facteurs neutres" value={delta.neutralFactors.length} />
+        <StatCard label="Facteurs negatifs" value={delta.negativeFactors.length} />
+      </div>
+      <TraceBlock title="Observations sources" items={delta.sourceObservationIds} />
+      <TraceBlock title="Limites" items={delta.limitations} />
+      <TraceBlock title="Donnees manquantes" items={delta.missingData} />
+    </div>
+  );
+}
+
+function StudyTrajectories({ study, studies }: { study: Study; studies: Study[] }) {
+  const comparisons = TrajectoryEngine.compare(studies).filter((item) => item.studyIds.includes(study.id));
+  return (
+    <Panel title="Trajectoires">
+      {comparisons.length ? (
+        <div className="grid gap-3">
+          {comparisons.map((comparison) => (
+            <div key={comparison.studyIds.join("-")} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <div className="flex items-center justify-between gap-3">
+                <p className="font-medium text-white">{comparison.studyIds.join(" / ")}</p>
+                <Badge>{comparison.similarity}</Badge>
+              </div>
+              <TraceBlock title="Etapes communes" items={comparison.commonSteps} />
+              <TraceBlock title="Catalyseurs communs" items={comparison.commonCatalysts} />
+              <TraceBlock title="Emotions recurrentes" items={comparison.commonEmotions} />
+              <TraceBlock title="Limites" items={comparison.limits} />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <SmartEmpty text="Comparer plusieurs trajectoires necessite au moins deux etudes." />
+      )}
+    </Panel>
+  );
+}
+
+function StudyQuestions({ study, updateStudy }: { study: Study; updateStudy: (study: Study) => void }) {
+  const questions = study.openQuestions ?? [];
+  return (
+    <Panel title="Questions ouvertes">
+      {questions.length ? (
+        <div className="grid gap-3">
+          {questions.map((question) => (
+            <div key={question.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-white">{question.text}</p>
+                <Badge>{question.status}</Badge>
+              </div>
+              <input
+                className="mt-3 w-full rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+                placeholder="Reponse"
+                value={question.answer ?? ""}
+                onChange={(event) =>
+                  updateStudy({
+                    ...study,
+                    openQuestions: questions.map((item) =>
+                      item.id === question.id ? { ...item, answer: event.target.value, status: event.target.value ? "repondue" : "ouverte", resolvedAt: event.target.value ? new Date().toISOString() : undefined } : item
+                    )
+                  })
+                }
+              />
+            </div>
+          ))}
+        </div>
+      ) : (
+        <SmartEmpty text="Aucune question ouverte. Les questions apparaissent apres validation d'une observation." />
+      )}
+    </Panel>
+  );
+}
+
+function StudyStats({ study }: { study: Study }) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+      <StatCard label="Manifestations" value={study.manifestations.length} />
+      <StatCard label="Relations" value={study.relations.length} />
+      <StatCard label="Catalyseurs" value={study.catalysts.length} />
+      <StatCard label="Reconnaissances" value={study.recognitions.length} />
+    </div>
+  );
+}
+
+function StudyHistory({ study }: { study: Study }) {
+  const entries = study.structuredHistory ?? [];
+  return (
+    <Panel title="Historique complet">
+      {entries.length ? (
+        <div className="grid gap-2">
+          {entries.map((entry) => (
+            <div key={entry.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-200">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>{entry.summary}</span>
+                <Badge>{entry.actionType}</Badge>
+              </div>
+              <p className="mt-1 text-xs text-stone-500">{entry.date} - {entry.objectType}:{entry.objectId}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <SmartEmpty text="Aucun historique structure disponible pour cette etude." />
+      )}
+    </Panel>
+  );
+}
+
+function StudyExportImport({ study }: { study: Study }) {
+  return (
+    <Panel title="Export / import de l'etude">
+      <div className="grid gap-3 md:grid-cols-2">
+        <button className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => exportStudy(study)}>
+          <Download className="mr-2 inline h-4 w-4" aria-hidden /> Exporter l&apos;etude active
+        </button>
+        <div className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-300">
+          Import securise a finaliser : previsualisation des conflits, fusion, remplacement et import comme nouvelle etude.
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function ObjectList({ items }: { items: Array<{ id: string; label: string; source?: string }> }) {
+  if (!items.length) return <SmartEmpty text="Aucune donnee disponible pour cette section." />;
+  return (
+    <div className="grid gap-2">
+      {items.map((item) => (
+        <div key={item.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+          <p className="font-medium text-white">{item.label}</p>
+          {item.source ? <p className="mt-1 text-sm leading-6 text-stone-400">{item.source}</p> : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TraceBlock({ title, items }: { title: string; items: string[] }) {
+  return <TagBlock title={title} items={items.length ? items : ["Non renseigne"]} />;
+}
+
+function TraceabilityHelp() {
+  return (
+    <div className="mt-3 rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-300">
+      Chaque carte affiche ses sources lorsque les observations validees ont produit des objets scientifiques.
+    </div>
+  );
+}
+
+function SmartEmpty({ text }: { text: string }) {
+  return <div className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-300">{text}</div>;
+}
+
 function Studies(props: {
   studies: Study[];
   selectedStudyId: string;
@@ -420,6 +927,51 @@ function Studies(props: {
   duplicateStudy: (id: string) => void;
 }) {
   const selected = props.studies.find((study) => study.id === props.selectedStudyId) ?? props.studies[0];
+  const [tab, setTab] = useState("overview");
+  const [journalQuery, setJournalQuery] = useState("");
+  const [journalSort, setJournalSort] = useState<"desc" | "asc">("desc");
+  const observations = (selected?.observations ?? [])
+    .filter((observation) =>
+      `${observation.rawText} ${observation.sourceExcerpts.join(" ")}`.toLowerCase().includes(journalQuery.toLowerCase())
+    )
+    .sort((left, right) => (journalSort === "desc" ? right.createdAt.localeCompare(left.createdAt) : left.createdAt.localeCompare(right.createdAt)));
+
+  function updateObservationRawText(observationId: string, rawText: string) {
+    if (!selected) return;
+    props.updateStudy({
+      ...selected,
+      observations: (selected.observations ?? []).map((observation) =>
+        observation.id === observationId ? { ...observation, rawText, updatedAt: new Date().toISOString() } : observation
+      )
+    });
+  }
+
+  function archiveObservation(observationId: string) {
+    if (!selected) return;
+    const observation = (selected.observations ?? []).find((item) => item.id === observationId);
+    if (!observation) return;
+    const linkedCount = [
+      ...observation.generatedManifestationIds,
+      ...observation.generatedEmotionIds,
+      ...observation.generatedCatalystIds,
+      ...observation.generatedRelationIds,
+      ...observation.generatedStateIds,
+      ...observation.generatedTransitionIds,
+      ...observation.generatedRecognitionIds,
+      ...observation.generatedTimelineEventIds,
+      ...observation.generatedDeltaIds
+    ].length;
+    const message = linkedCount
+      ? "Cette observation a produit des objets scientifiques. Elle sera archivee et les objets lies resteront consultables avec leur provenance. Continuer ?"
+      : "Supprimer cette observation ?";
+    if (!window.confirm(message)) return;
+    props.updateStudy({
+      ...selected,
+      observations: (selected.observations ?? []).map((item) =>
+        item.id === observationId ? { ...item, status: "archived", updatedAt: new Date().toISOString() } : item
+      )
+    });
+  }
   return (
     <div className="grid gap-4 xl:grid-cols-[340px_1fr]">
       <Panel title="Liste des études">
@@ -466,6 +1018,48 @@ function Studies(props: {
             </button>
           </div>
         </Panel>
+      )}
+      {selected && (
+        <div className="grid gap-4 xl:col-start-2">
+          <div className="glass rounded-lg p-3">
+            <div className="flex flex-wrap gap-2">
+              {studyTabs.map((item) => (
+                <button
+                  key={item.id}
+                  className={`rounded-md px-3 py-2 text-sm transition ${tab === item.id ? "bg-gold/18 text-goldSoft" : "text-stone-300 hover:bg-white/7"}`}
+                  onClick={() => setTab(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          {tab === "overview" && <StudyOverview study={selected} />}
+          {tab === "journal" && (
+            <StudyJournal
+              study={selected}
+              observations={observations}
+              query={journalQuery}
+              sort={journalSort}
+              onQueryChange={setJournalQuery}
+              onSortChange={setJournalSort}
+              onEdit={updateObservationRawText}
+              onArchive={archiveObservation}
+            />
+          )}
+          {tab === "timeline" && <Timeline events={buildTimeline(selected)} />}
+          {tab === "objects" && <StudyObjects study={selected} updateStudy={props.updateStudy} />}
+          {tab === "states" && <StudyStates study={selected} updateStudy={props.updateStudy} />}
+          {tab === "comparisons" && <StateComparison study={selected} />}
+          {tab === "transitions" && <StudyTransitions study={selected} />}
+          {tab === "delta" && <StudyDelta study={selected} />}
+          {tab === "recognitions" && <Recognitions study={selected} />}
+          {tab === "trajectories" && <StudyTrajectories study={selected} studies={props.studies} />}
+          {tab === "questions" && <StudyQuestions study={selected} updateStudy={props.updateStudy} />}
+          {tab === "stats" && <StudyStats study={selected} />}
+          {tab === "history" && <StudyHistory study={selected} />}
+          {tab === "export" && <StudyExportImport study={selected} />}
+        </div>
       )}
     </div>
   );

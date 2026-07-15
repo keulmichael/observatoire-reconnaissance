@@ -6,6 +6,8 @@ import { TrajectoryEngine } from "../engines/TrajectoryEngine";
 import type { ObservationAnalysisDraft, ObservationProposalStatus, Study, UnderstandingState } from "../types";
 import { parseObservation } from "./ObservationParser";
 import { addObservationToStudy, constructScientificStudy } from "./ScientificConstruction";
+import { createEmptyStudy } from "../study-factory";
+import { migrateObservatoryData } from "../data-migration";
 
 const demoObservation =
   "Hier, j'ai présenté un nouveau cadre de réflexion à une personne. Aujourd'hui, elle m'a dit qu'elle se sentait perdue depuis la veille. Je ne connais pas encore la raison.";
@@ -174,6 +176,96 @@ describe("ObservationParser", () => {
     expect(result.delta).toEqual(DeltaEngine.calculate(expectedDifference));
     expect(result.relationEngineProposals).toEqual(RelationEngine.analyze(result.study));
     expect(result.trajectoryComparisons).toEqual(TrajectoryEngine.compare([result.study, peer]));
+  });
+
+  it("creates a real empty Study", () => {
+    const study = createEmptyStudy("2026-07-15T10:00:00.000Z", "study-empty");
+
+    expect(study.manifestations).toHaveLength(0);
+    expect(study.emotionObservations).toHaveLength(0);
+    expect(study.transitions).toHaveLength(0);
+    expect(study.recognitions).toHaveLength(0);
+    expect(study.observations).toHaveLength(0);
+  });
+
+  it("creates a permanent ObservationRecord after validation", () => {
+    const draft = validateAll(parseObservation(demoObservation, "2026-07-15T10:00:00.000Z"));
+    const result = constructScientificStudy(draft, "2026-07-15T10:00:00.000Z");
+
+    expect(result.study.observations?.[0]).toMatchObject({
+      id: draft.id,
+      rawText: demoObservation,
+      status: "active"
+    });
+    expect(result.study.observations?.[0].sourceExcerpts.length).toBeGreaterThan(0);
+  });
+
+  it("traces a generated manifestation to its source observation", () => {
+    const draft = validateAll(parseObservation(demoObservation, "2026-07-15T10:00:00.000Z"));
+    const result = constructScientificStudy(draft, "2026-07-15T10:00:00.000Z");
+    const manifestation = result.study.manifestations[0];
+
+    expect(manifestation.sourceObservationIds).toContain(draft.id);
+    expect(manifestation.sourceExcerpt).toContain("présenté");
+  });
+
+  it("persists open questions generated from an observation", () => {
+    const draft = validateAll(parseObservation(demoObservation, "2026-07-15T10:00:00.000Z"));
+    const result = constructScientificStudy(draft, "2026-07-15T10:00:00.000Z");
+
+    expect(result.study.openQuestions?.length).toBeGreaterThan(0);
+    expect(result.study.openQuestions?.every((question) => question.status === "ouverte")).toBe(true);
+  });
+
+  it("persists Delta when a transition is created", () => {
+    const draft = validateAll(
+      parseObservation(
+        "Hier, j'ai présenté une idee. Aujourd'hui, il a dit que j'ai compris une nouvelle compréhension et je reformule cette idee.",
+        "2026-07-15T10:00:00.000Z"
+      )
+    );
+    const result = constructScientificStudy(draft, "2026-07-15T10:00:00.000Z");
+
+    expect(result.study.transitions).toHaveLength(1);
+    expect(result.study.deltaScores?.[0].transitionId).toBe(result.study.transitions[0].id);
+    expect(result.study.deltaScores?.[0].sourceObservationIds).toContain(draft.id);
+  });
+
+  it("keeps relation proposals durable after integration", () => {
+    const draft = validateAll(parseObservation(demoObservation, "2026-07-15T10:00:00.000Z"));
+    const result = constructScientificStudy(draft, "2026-07-15T10:00:00.000Z");
+
+    expect(result.study.relationProposals?.length).toBeGreaterThan(0);
+    expect(result.study.relationProposals?.[0].sourceObservationIds).toContain(draft.id);
+  });
+
+  it("migrates legacy data without deleting studies", () => {
+    const legacy = { version: 1 as const, studies: [makeStudy("legacy-study", "Legacy")] };
+    const migrated = migrateObservatoryData(legacy);
+
+    expect(migrated.schemaVersion).toBe(2);
+    expect(migrated.studies).toHaveLength(1);
+    expect(migrated.studies[0].observations).toEqual([]);
+    expect(migrated.studies[0].structuredHistory).toBeInstanceOf(Array);
+  });
+
+  it("supports the complete core path through exportable study data", () => {
+    const study = createEmptyStudy("2026-07-15T10:00:00.000Z", "study-path");
+    const first = validateAll(parseObservation(demoObservation, "2026-07-15T10:00:00.000Z"));
+    const afterFirst = addObservationToStudy(first, study, [study], "2026-07-15T10:00:00.000Z").study;
+    const second = validateAll(
+      parseObservation(
+        "Hier, j'ai présenté une idee. Aujourd'hui, il a dit que j'ai compris une nouvelle compréhension et je reformule cette idee.",
+        "2026-07-16T10:00:00.000Z"
+      )
+    );
+    const afterSecond = addObservationToStudy(second, afterFirst, [afterFirst], "2026-07-16T10:00:00.000Z").study;
+
+    expect(afterSecond.observations).toHaveLength(2);
+    expect(afterSecond.states.length).toBeGreaterThanOrEqual(2);
+    expect(afterSecond.transitions).toHaveLength(1);
+    expect(afterSecond.deltaScores).toHaveLength(1);
+    expect(JSON.stringify(afterSecond)).toContain(second.rawText);
   });
 });
 

@@ -1,22 +1,27 @@
 import { demoData } from "./demo-data";
+import { migrateObservatoryData } from "./data-migration";
 import type { ObservatoryData } from "./types";
 
 const STORAGE_KEY = "observatoire-reconnaissance:v1";
 
 export const repository = {
   load(): ObservatoryData {
-    if (typeof window === "undefined") return demoData;
+    if (typeof window === "undefined") return migrateObservatoryData(demoData);
     const raw = window.localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      this.save(demoData);
-      return demoData;
+      const migrated = migrateObservatoryData({ version: 1, studies: [] });
+      this.save(migrated);
+      return migrated;
     }
     try {
       const parsed = JSON.parse(raw) as ObservatoryData;
-      return { ...parsed, observationDrafts: parsed.observationDrafts ?? [] };
+      const migrated = migrateObservatoryData(parsed);
+      this.save(migrated);
+      return migrated;
     } catch {
-      this.save(demoData);
-      return demoData;
+      const migrated = migrateObservatoryData({ version: 1, studies: [] });
+      this.save(migrated);
+      return migrated;
     }
   },
   save(data: ObservatoryData) {
@@ -24,7 +29,8 @@ export const repository = {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data, null, 2));
   },
   reset() {
-    this.save(demoData);
-    return demoData;
+    const migrated = migrateObservatoryData(demoData);
+    this.save(migrated);
+    return migrated;
   }
 };
