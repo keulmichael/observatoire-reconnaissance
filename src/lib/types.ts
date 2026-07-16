@@ -251,9 +251,11 @@ export interface ReflexiveMapData {
 
 export interface ObservatoryData {
   version: 1;
-  schemaVersion?: 2;
+  schemaVersion?: 2 | 3;
   studies: Study[];
   observationDrafts?: ObservationAnalysisDraft[];
+  aiSettings?: ObservationAISettings;
+  aiObservationResults?: AIObservationResult[];
 }
 
 export type ObservationDraftStatus = "draft" | "reviewed" | "validated" | "rejected";
@@ -340,7 +342,121 @@ export interface ObservationAnalysisDraft {
   status: ObservationDraftStatus;
   methodologicalStatus: ObservationMethodStatus;
   conclusion: string;
+  observationMode?: ObservationMode;
+  deterministicAnalysis?: ObservationAIResponse;
+  aiAnalysis?: ObservationAIResponse;
+  aiResultId?: string;
+  aiStatus?: AIObservationResult["status"];
+  aiError?: string;
+  aiLatency?: number;
+  aiModel?: string;
+  aiAnalyzedAt?: string;
+  mergedObservation?: MergedObservationAnalysis;
 }
+
+export type ObservationMode = "local" | "ai-assisted";
+
+export interface ObservationAISettings {
+  mode: ObservationMode;
+  provider: "openai";
+  model: string;
+  temperature: number;
+  keepResponses: boolean;
+  autoReanalyze: boolean;
+  showReasoningSummary: boolean;
+  showParserAIDifferences: boolean;
+  allowFullStudyContext: boolean;
+}
+
+export type AIProposalStatus = "proposed" | "accepted" | "edited" | "rejected";
+export type AIProposalSource = "parser" | "ai" | "parser+ai" | "user";
+
+export interface AIObservationProposal {
+  id: string;
+  type: string;
+  label: string;
+  excerpt: string;
+  confidence: number;
+  reason: string;
+  source: AIProposalSource;
+  status: AIProposalStatus;
+  model?: string;
+  version?: string;
+  promptHash?: string;
+  createdAt?: string;
+  latency?: number;
+  userValidation?: {
+    status: Exclude<AIProposalStatus, "proposed">;
+    validatedAt: string;
+    comment?: string;
+  };
+}
+
+export type ObservationAICollectionKey =
+  | "people"
+  | "organisations"
+  | "places"
+  | "manifestations"
+  | "events"
+  | "objects"
+  | "concepts"
+  | "emotions"
+  | "emotionScope"
+  | "behaviours"
+  | "decisions"
+  | "intentions"
+  | "relations"
+  | "questions"
+  | "timeline";
+
+export type ObservationAIResponse = Record<ObservationAICollectionKey, AIObservationProposal[]> & {
+  confidence: number;
+  limitations: string[];
+  uncertainties: string[];
+  reasoningSummary: string;
+};
+
+export interface AIObservationResult {
+  id: string;
+  promptHash: string;
+  provider: ObservationAISettings["provider"];
+  model: string;
+  createdAt: string;
+  response: ObservationAIResponse | null;
+  tokenUsage: {
+    promptTokens?: number;
+    completionTokens?: number;
+    totalTokens?: number;
+  };
+  latency: number;
+  status: "success" | "cached" | "error" | "offline" | "disabled";
+  error?: string;
+}
+
+export interface AIConnectionStatus {
+  configured: boolean;
+  provider: ObservationAISettings["provider"];
+  reachable: boolean;
+  model: string;
+  mode: "local" | "assisted";
+  message: string;
+  latency: number | null;
+  checkedAt: string;
+  lastError?: string;
+}
+
+export interface MergedObservationItem extends AIObservationProposal {
+  sources: AIProposalSource[];
+  parserProposalIds: string[];
+  aiProposalIds: string[];
+  mergeStatus: "convergence" | "parser-only" | "ai-only" | "divergence";
+}
+
+export type MergedObservationAnalysis = Record<ObservationAICollectionKey, MergedObservationItem[]> & {
+  differences: MergedObservationItem[];
+  convergences: MergedObservationItem[];
+  createdAt: string;
+};
 
 export type ObservationRecordStatus = "active" | "archived" | "deleted";
 export type OpenQuestionStatus = "ouverte" | "repondue" | "abandonnee";
@@ -386,6 +502,16 @@ export interface ObservationRecord {
   methodologicalWarnings: string[];
   sourceExcerpts: string[];
   openQuestions: OpenQuestion[];
+  aiResultId?: string;
+  deterministicAnalysis?: ObservationAIResponse;
+  aiAnalysis?: ObservationAIResponse;
+  mergedObservation?: MergedObservationAnalysis;
+  observationMode?: ObservationMode;
+  aiStatus?: AIObservationResult["status"];
+  aiError?: string;
+  aiLatency?: number;
+  aiModel?: string;
+  aiAnalyzedAt?: string;
 }
 
 export interface OpenQuestion {

@@ -7,15 +7,18 @@ import type {
   PersistentRelationProposal,
   Study
 } from "./types";
+import { defaultAISettings } from "./ai/ObservationAI";
 
-export const CURRENT_SCHEMA_VERSION = 2 as const;
+export const CURRENT_SCHEMA_VERSION = 3 as const;
 
 export function migrateObservatoryData(input: ObservatoryData): ObservatoryData {
   return {
     ...input,
     schemaVersion: CURRENT_SCHEMA_VERSION,
     studies: input.studies.map(normalizeStudy),
-    observationDrafts: input.observationDrafts ?? []
+    observationDrafts: input.observationDrafts ?? [],
+    aiSettings: { ...defaultAISettings, ...(input.aiSettings ?? {}) },
+    aiObservationResults: input.aiObservationResults ?? []
   };
 }
 
@@ -113,7 +116,17 @@ export function recordFromDraft(
     ],
     methodologicalWarnings: draft.analysisWarnings,
     sourceExcerpts: [...new Set(proposals(draft).map((item) => item.sourceExcerpt).filter(Boolean))],
-    openQuestions
+    openQuestions,
+    aiResultId: draft.aiResultId,
+    deterministicAnalysis: draft.deterministicAnalysis,
+    aiAnalysis: draft.aiAnalysis,
+    mergedObservation: draft.mergedObservation,
+    observationMode: draft.observationMode,
+    aiStatus: draft.aiStatus,
+    aiError: draft.aiError,
+    aiLatency: draft.aiLatency,
+    aiModel: draft.aiModel,
+    aiAnalyzedAt: draft.aiAnalyzedAt
   };
 }
 

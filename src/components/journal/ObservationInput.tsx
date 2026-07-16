@@ -7,7 +7,7 @@ export function ObservationInput({
 }: {
   value: string;
   onChange: (value: string) => void;
-  onAnalyze: () => void;
+  onAnalyze: () => void | Promise<void>;
 }) {
   return (
     <section className="glass rounded-lg p-4">

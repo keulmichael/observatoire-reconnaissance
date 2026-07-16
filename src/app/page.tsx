@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  SlidersHorizontal,
   Sparkles,
   TrendingUp,
   Trash2
@@ -36,7 +37,7 @@ import {
   compareStates,
   exportStudy
 } from "@/lib/analytics";
-import type { AppView, ObservationAnalysisDraft, Study, TransitionStage } from "@/lib/types";
+import type { AIConnectionStatus, AIObservationResult, AppView, ObservationAISettings, ObservationAnalysisDraft, Study, TransitionStage } from "@/lib/types";
 import { RecognitionCharts } from "@/components/recognition-charts";
 import { ObservationAnalysis } from "@/components/journal/ObservationAnalysis";
 import { ObservationFollowup } from "@/components/journal/ObservationFollowup";
@@ -46,6 +47,7 @@ import { ReflexivityDashboardEngine } from "@/lib/engines/ReflexivityDashboardEn
 import { StateDifferenceEngine } from "@/lib/engines/StateDifferenceEngine";
 import { TrajectoryEngine } from "@/lib/engines/TrajectoryEngine";
 import { parseObservation } from "@/lib/parser/ObservationParser";
+import { analyzeWithObservationAI, defaultAISettings } from "@/lib/ai/ObservationAI";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "journal", label: "Journal d'Observation", icon: ClipboardList },
@@ -109,6 +111,10 @@ export default function ObservatoryApp() {
     exportAll,
     updateMap,
     observationDrafts,
+    aiSettings,
+    aiObservationResults,
+    updateAISettings,
+    saveAIObservationResult,
     saveObservationDraft,
     integrateObservationDraft
   } = useObservatory();
@@ -119,6 +125,10 @@ export default function ObservatoryApp() {
   const [integrationNotice, setIntegrationNotice] = useState("");
   const [targetStudyId, setTargetStudyId] = useState<string | "new">("new");
   const [targetStudySearch, setTargetStudySearch] = useState("");
+  const [aiConnectionStatus, setAIConnectionStatus] = useState<AIConnectionStatus | null>(null);
+  const [aiConnectionTesting, setAIConnectionTesting] = useState(false);
+  const [lastAnalysisNotice, setLastAnalysisNotice] = useState("Analyse locale uniquement");
+  const effectiveAISettings = aiSettings ?? defaultAISettings;
   const dashboard = useMemo(() => buildDashboard(data), [data]);
   const analysis = useMemo(() => buildAnalysis(data), [data]);
   const reflexivityDashboard = useMemo(() => ReflexivityDashboardEngine.build(data), [data]);
@@ -128,12 +138,46 @@ export default function ObservatoryApp() {
     `${study.title} ${study.subject} ${study.description}`.toLowerCase().includes(query.toLowerCase())
   );
 
-  function analyzeObservation() {
-    const draft = parseObservation(observationText);
-    saveObservationDraft(draft);
-    setCurrentDraft(draft);
-    setTargetStudyId(suggestStudies(draft, data.studies)[0]?.id ?? "new");
-    setIntegrationNotice("");
+  async function analyzeObservation() {
+    const result = effectiveAISettings.mode === "ai-assisted"
+      ? await analyzeObservationOnServer(observationText, effectiveAISettings, aiObservationResults)
+      : await analyzeWithObservationAI({
+          draft: parseObservation(observationText),
+          settings: effectiveAISettings,
+          cache: aiObservationResults
+        });
+    saveObservationDraft(result.draft);
+    if (effectiveAISettings.keepResponses) saveAIObservationResult(result.result);
+    setCurrentDraft(result.draft);
+    setTargetStudyId(suggestStudies(result.draft, data.studies)[0]?.id ?? "new");
+    const notice = analysisNotice(result.result);
+    setLastAnalysisNotice(notice);
+    setIntegrationNotice(result.result.error ? `${notice} : ${result.result.error}` : "");
+  }
+
+  async function testAIConnection() {
+    setAIConnectionTesting(true);
+    try {
+      const response = await fetch(`/api/ai/status?model=${encodeURIComponent(effectiveAISettings.model)}`, {
+        cache: "no-store"
+      });
+      const status = (await response.json()) as AIConnectionStatus;
+      setAIConnectionStatus(status);
+    } catch (error) {
+      setAIConnectionStatus({
+        configured: false,
+        provider: "openai",
+        reachable: false,
+        model: effectiveAISettings.model,
+        mode: "assisted",
+        message: "Test de connexion impossible",
+        latency: null,
+        checkedAt: new Date().toISOString(),
+        lastError: error instanceof Error ? error.message : "Erreur de test"
+      });
+    } finally {
+      setAIConnectionTesting(false);
+    }
   }
 
   function updateCurrentDraft(draft: ObservationAnalysisDraft) {
@@ -264,6 +308,12 @@ export default function ObservatoryApp() {
               setTargetStudyId={setTargetStudyId}
               setTargetStudySearch={setTargetStudySearch}
               validateObservation={validateObservation}
+              aiSettings={effectiveAISettings}
+              onAISettingsChange={updateAISettings}
+              aiConnectionStatus={aiConnectionStatus}
+              aiConnectionTesting={aiConnectionTesting}
+              onTestAIConnection={testAIConnection}
+              lastAnalysisNotice={lastAnalysisNotice}
             />
           )}
           {view === "followup" && <ObservationFollowup drafts={observationDrafts} study={selectedStudy} />}
@@ -334,7 +384,13 @@ function Journal({
   updateCurrentDraft,
   setTargetStudyId,
   setTargetStudySearch,
-  validateObservation
+  validateObservation,
+  aiSettings,
+  onAISettingsChange,
+  aiConnectionStatus,
+  aiConnectionTesting,
+  onTestAIConnection,
+  lastAnalysisNotice
 }: {
   observationText: string;
   setObservationText: (value: string) => void;
@@ -343,14 +399,28 @@ function Journal({
   targetStudyId: string | "new";
   targetStudySearch: string;
   integrationNotice: string;
-  analyzeObservation: () => void;
+  analyzeObservation: () => void | Promise<void>;
   updateCurrentDraft: (draft: ObservationAnalysisDraft) => void;
   setTargetStudyId: (value: string | "new") => void;
   setTargetStudySearch: (value: string) => void;
   validateObservation: () => void;
+  aiSettings: ObservationAISettings;
+  onAISettingsChange: (settings: ObservationAISettings) => void;
+  aiConnectionStatus: AIConnectionStatus | null;
+  aiConnectionTesting: boolean;
+  onTestAIConnection: () => void | Promise<void>;
+  lastAnalysisNotice: string;
 }) {
   return (
     <div className="grid gap-4">
+      <ObservationModeIndicator settings={aiSettings} lastAnalysisNotice={lastAnalysisNotice} currentDraft={currentDraft} />
+      <ObservationAISettingsPanel
+        settings={aiSettings}
+        onChange={onAISettingsChange}
+        status={aiConnectionStatus}
+        testing={aiConnectionTesting}
+        onTest={onTestAIConnection}
+      />
       <ObservationInput value={observationText} onChange={setObservationText} onAnalyze={analyzeObservation} />
       {currentDraft ? (
         <ObservationAnalysis
@@ -362,6 +432,7 @@ function Journal({
           onTargetStudySearchChange={setTargetStudySearch}
           onChange={updateCurrentDraft}
           onValidate={validateObservation}
+          aiSettings={aiSettings}
         />
       ) : null}
       {integrationNotice ? (
@@ -370,6 +441,185 @@ function Journal({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ObservationAISettingsPanel({
+  settings,
+  onChange,
+  status,
+  testing,
+  onTest
+}: {
+  settings: ObservationAISettings;
+  onChange: (settings: ObservationAISettings) => void;
+  status: AIConnectionStatus | null;
+  testing: boolean;
+  onTest: () => void | Promise<void>;
+}) {
+  function patch(partial: Partial<ObservationAISettings>) {
+    onChange({ ...settings, ...partial });
+  }
+
+  return (
+    <Panel title="Parametres d'observation">
+      <div className="grid gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <SlidersHorizontal className="h-4 w-4 text-goldSoft" aria-hidden />
+          <button
+            className={`rounded-md border px-3 py-2 text-sm ${settings.mode === "local" ? "border-gold/60 bg-gold/10 text-goldSoft" : "border-white/10 text-stone-200"}`}
+            onClick={() => patch({ mode: "local" })}
+          >
+            Local
+          </button>
+          <button
+            className={`rounded-md border px-3 py-2 text-sm ${settings.mode === "ai-assisted" ? "border-gold/60 bg-gold/10 text-goldSoft" : "border-white/10 text-stone-200"}`}
+            onClick={() => patch({ mode: "ai-assisted" })}
+          >
+            IA assistee
+          </button>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="grid gap-2">
+            <span className="text-sm font-medium text-stone-200">Modele</span>
+            <input
+              className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+              value={settings.model}
+              onChange={(event) => patch({ model: event.target.value })}
+            />
+          </label>
+          <label className="grid gap-2">
+            <span className="text-sm font-medium text-stone-200">Temperature</span>
+            <input
+              className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+              type="number"
+              min="0"
+              max="1"
+              step="0.1"
+              value={settings.temperature}
+              onChange={(event) => patch({ temperature: Number(event.target.value) })}
+            />
+          </label>
+        </div>
+        <div className="grid gap-2 md:grid-cols-2">
+          <Toggle label="Conserver les reponses IA" checked={settings.keepResponses} onChange={(value) => patch({ keepResponses: value })} />
+          <Toggle label="Reanalyser automatiquement" checked={settings.autoReanalyze} onChange={(value) => patch({ autoReanalyze: value })} />
+          <Toggle label="Afficher le raisonnement resume" checked={settings.showReasoningSummary} onChange={(value) => patch({ showReasoningSummary: value })} />
+          <Toggle label="Afficher differences Parser / IA" checked={settings.showParserAIDifferences} onChange={(value) => patch({ showParserAIDifferences: value })} />
+          <Toggle label="Autoriser l'IA a utiliser toute l'etude" checked={settings.allowFullStudyContext} onChange={(value) => patch({ allowFullStudyContext: value })} />
+        </div>
+        <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-white">Diagnostic IA</h3>
+            <button
+              className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft disabled:cursor-not-allowed disabled:opacity-50"
+              onClick={onTest}
+              disabled={testing}
+            >
+              {testing ? "Test en cours..." : "Tester la connexion IA"}
+            </button>
+          </div>
+          <div className="grid gap-2 text-sm text-stone-300 md:grid-cols-2">
+            <DiagnosticLine label="Configuree" value={status ? (status.configured ? "oui" : "non") : "non testee"} />
+            <DiagnosticLine label="Fournisseur" value={status?.provider ?? settings.provider} />
+            <DiagnosticLine label="Modele" value={status?.model ?? settings.model} />
+            <DiagnosticLine label="Connexion" value={status ? (status.reachable ? "operationnelle" : "indisponible") : "non testee"} />
+            <DiagnosticLine label="Latence" value={status?.latency === null || status?.latency === undefined ? "non mesuree" : `${status.latency} ms`} />
+            <DiagnosticLine label="Dernier test" value={status?.checkedAt ?? "jamais"} />
+          </div>
+          {status?.lastError ? (
+            <p className="mt-3 rounded-md border border-red-400/30 bg-red-400/10 p-3 text-sm leading-6 text-red-100">
+              Derniere erreur : {status.lastError}
+            </p>
+          ) : null}
+          {status?.message ? <p className="mt-3 text-sm leading-6 text-stone-400">{status.message}</p> : null}
+        </div>
+        <p className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-400">
+          Par defaut, seule l&apos;observation courante peut etre transmise a un fournisseur IA configure. Le moteur scientifique reste local et deterministe.
+        </p>
+      </div>
+    </Panel>
+  );
+}
+
+function ObservationModeIndicator({
+  settings,
+  lastAnalysisNotice,
+  currentDraft
+}: {
+  settings: ObservationAISettings;
+  lastAnalysisNotice: string;
+  currentDraft: ObservationAnalysisDraft | null;
+}) {
+  return (
+    <div className="glass rounded-lg p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge>{settings.mode === "ai-assisted" ? "Mode IA assistee" : "Mode Local"}</Badge>
+          <Badge>{lastAnalysisNotice}</Badge>
+        </div>
+        {currentDraft?.aiError ? <span className="text-sm text-red-200">{currentDraft.aiError}</span> : null}
+      </div>
+    </div>
+  );
+}
+
+function DiagnosticLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-black/10 p-2">
+      <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{label}</p>
+      <p className="mt-1 text-stone-100">{value}</p>
+    </div>
+  );
+}
+
+async function analyzeObservationOnServer(
+  rawText: string,
+  settings: ObservationAISettings,
+  cache: AIObservationResult[]
+): Promise<{ draft: ObservationAnalysisDraft; result: AIObservationResult; cache: AIObservationResult[] }> {
+  const response = await fetch("/api/ai/analyze", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ rawText, settings, cache })
+  });
+  if (!response.ok) {
+    const payload = (await response.json().catch(() => null)) as { error?: string; latency?: number } | null;
+    const draft = parseObservation(rawText);
+    const fallback = await analyzeWithObservationAI({ draft, settings: { ...settings, mode: "local" } });
+    return {
+      ...fallback,
+      result: {
+        ...fallback.result,
+        status: "error",
+        error: payload?.error ?? `Erreur serveur IA ${response.status}`,
+        latency: payload?.latency ?? 0
+      },
+      draft: {
+        ...fallback.draft,
+        observationMode: "ai-assisted",
+        aiStatus: "error",
+        aiError: payload?.error ?? `Erreur serveur IA ${response.status}`
+      }
+    };
+  }
+  return response.json() as Promise<{ draft: ObservationAnalysisDraft; result: AIObservationResult; cache: AIObservationResult[] }>;
+}
+
+function analysisNotice(result: AIObservationResult) {
+  if (result.status === "success") return "Analyse IA reussie";
+  if (result.status === "cached") return "Analyse IA issue du cache";
+  if (result.status === "offline") return "Analyse IA indisponible, repli local";
+  if (result.status === "error") return "Analyse IA en erreur";
+  return "Analyse locale uniquement";
+}
+
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-3 rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm text-stone-200">
+      <input className="h-4 w-4 accent-[#d7b56d]" type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      {label}
+    </label>
   );
 }
 
