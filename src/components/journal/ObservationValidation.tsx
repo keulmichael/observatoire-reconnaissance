@@ -1,6 +1,6 @@
 "use client";
 
-import type React from "react";
+import React from "react";
 import { Check, Pencil, Plus, X } from "lucide-react";
 import { Badge, Panel } from "@/components/ui";
 import type {
@@ -92,7 +92,16 @@ export function ObservationValidation({
             <ProposalRow
               key={item.id}
               item={item}
-              details={[item.expressionKind, item.sourceKind, item.reason]}
+              details={[
+                `categorie : ${item.canonicalEmotion ?? item.emotion}`,
+                `expression : ${item.originalExpression ?? item.label}`,
+                `portee : ${item.scope ?? "indeterminate"}`,
+                `polarite : ${item.polarity ?? "present"}`,
+                `confiance : ${Math.round(item.confidence * 100)} %`,
+                item.expressionKind,
+                item.sourceKind,
+                item.reason
+              ]}
               onAccept={() => updateList<DetectedEmotion>("detectedEmotions", updateStatus(item.id, "accepted"))}
               onReject={() => updateList<DetectedEmotion>("detectedEmotions", updateStatus(item.id, "rejected"))}
               onEdit={(label) => updateList<DetectedEmotion>("detectedEmotions", updateLabel(item.id, label))}
@@ -150,6 +159,10 @@ export function ObservationValidation({
 }
 
 function ProposalGroup({ title, children, onAdd }: { title: string; children: React.ReactNode; onAdd?: () => void }) {
+  const childCount = React.Children.count(children);
+  const emptyText = title.toLowerCase().includes("motion")
+    ? "Aucune emotion explicite detectee dans ce texte."
+    : "Aucune proposition.";
   return (
     <div>
       <div className="mb-2 flex items-center justify-between gap-3">
@@ -161,7 +174,9 @@ function ProposalGroup({ title, children, onAdd }: { title: string; children: Re
           </button>
         ) : null}
       </div>
-      <div className="grid gap-2">{children || <p className="text-sm text-stone-500">Aucune proposition.</p>}</div>
+      <div className="grid gap-2">
+        {childCount ? children : <p className="text-sm text-stone-500">{emptyText}</p>}
+      </div>
     </div>
   );
 }

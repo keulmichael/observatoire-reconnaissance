@@ -86,6 +86,12 @@ const transitionStages: TransitionStage[] = [
   "Transmission"
 ];
 
+const appBuildInfo = {
+  version: process.env.NEXT_PUBLIC_APP_VERSION ?? "0.1.1",
+  commit: process.env.NEXT_PUBLIC_COMMIT_SHA ?? "local",
+  buildDate: process.env.NEXT_PUBLIC_BUILD_DATE ?? "build local"
+};
+
 export default function ObservatoryApp() {
   const {
     data,
@@ -307,6 +313,9 @@ export default function ObservatoryApp() {
           <div className="mt-4 rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
             Les émotions sont des indicateurs de transition, pas des preuves de vérité.
           </div>
+          <p className="mt-4 text-xs text-stone-500">
+            Version {appBuildInfo.version} · commit {appBuildInfo.commit} · build {formatBuildDate(appBuildInfo.buildDate)}
+          </p>
         </aside>
       </div>
     </main>
@@ -521,7 +530,9 @@ function StudyJournal({
   onQueryChange,
   onSortChange,
   onEdit,
-  onArchive
+  onArchive,
+  onReanalyze,
+  onEmotionStatus
 }: {
   study: Study;
   observations: NonNullable<Study["observations"]>;
@@ -531,6 +542,8 @@ function StudyJournal({
   onSortChange: (value: "desc" | "asc") => void;
   onEdit: (id: string, rawText: string) => void;
   onArchive: (id: string) => void;
+  onReanalyze: () => void;
+  onEmotionStatus: (observationId: string, emotionId: string, status: "accepted" | "rejected") => void;
 }) {
   return (
     <Panel title="Journal permanent des observations">
@@ -549,6 +562,11 @@ function StudyJournal({
           <option className="bg-ink" value="desc">Plus recentes</option>
           <option className="bg-ink" value="asc">Plus anciennes</option>
         </select>
+      </div>
+      <div className="mb-4">
+        <button className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={onReanalyze}>
+          Reanalyser les observations de cette etude
+        </button>
       </div>
       {observations.length ? (
         <div className="grid gap-3">
@@ -575,6 +593,7 @@ function StudyJournal({
                   ...observation.generatedDeltaIds
                 ]} />
               </div>
+              <ObservationEmotionReview observation={observation} onEmotionStatus={onEmotionStatus} />
               <ObservationImpact observationId={observation.id} study={study} />
               <div className="mt-3 flex flex-wrap gap-2">
                 <button className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-200" onClick={() => onArchive(observation.id)}>
@@ -599,6 +618,50 @@ function ObservationImpact({ observationId, study }: { observationId: string; st
   return (
     <div className="mt-3 rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
       Comparaison avec les observations anterieures de cette etude : {longitudinalComparisons.length} proposition(s). Ce que cette observation a change : {states.length} etat(s), {transitions.length} transition(s), {deltas.length} Delta(s). {states.length || transitions.length || deltas.length || longitudinalComparisons.length ? "" : "Aucune transition complete n'a ete creee, car les donnees restent insuffisantes."}
+    </div>
+  );
+}
+
+function ObservationEmotionReview({
+  observation,
+  onEmotionStatus
+}: {
+  observation: NonNullable<Study["observations"]>[number];
+  onEmotionStatus: (observationId: string, emotionId: string, status: "accepted" | "rejected") => void;
+}) {
+  return (
+    <div className="mt-3 rounded-md border border-white/10 bg-white/[0.04] p-3">
+      <h4 className="text-xs uppercase tracking-[0.18em] text-stone-500">Emotions ou etats detectes</h4>
+      {observation.detectedEmotions.length ? (
+        <div className="mt-2 grid gap-2">
+          {observation.detectedEmotions.map((emotion) => (
+            <div key={emotion.id} className="rounded-md border border-white/10 bg-black/10 p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-white">{emotion.originalExpression ?? emotion.label}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Badge>{emotion.canonicalEmotion ?? emotion.emotion}</Badge>
+                  <Badge>{emotion.status}</Badge>
+                  <Badge>{emotion.polarity ?? "present"}</Badge>
+                  <Badge>{emotion.scope ?? "indeterminate"}</Badge>
+                </div>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-stone-300">{emotion.sourceExcerpt}</p>
+              {emotion.status === "proposed" ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={() => onEmotionStatus(observation.id, emotion.id, "accepted")}>
+                    Accepter
+                  </button>
+                  <button className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-200" onClick={() => onEmotionStatus(observation.id, emotion.id, "rejected")}>
+                    Rejeter
+                  </button>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-sm text-stone-500">Aucune emotion explicite detectee dans ce texte.</p>
+      )}
     </div>
   );
 }
@@ -1078,6 +1141,113 @@ function Studies(props: {
       )
     });
   }
+
+  function reanalyzeStudyObservations() {
+    if (!selected) return;
+    const now = new Date().toISOString();
+    const updatedObservations = (selected.observations ?? []).map((observation) => {
+      const draft = parseObservation(observation.rawText, observation.createdAt);
+      const existingKeys = new Set(
+        observation.detectedEmotions.map((emotion) =>
+          `${(emotion.canonicalEmotion ?? emotion.emotion).toLowerCase()}-${(emotion.originalExpression ?? emotion.label).toLowerCase()}-${emotion.sourceExcerpt}`
+        )
+      );
+      const newEmotions = draft.detectedEmotions.filter((emotion) => {
+        const key = `${(emotion.canonicalEmotion ?? emotion.emotion).toLowerCase()}-${(emotion.originalExpression ?? emotion.label).toLowerCase()}-${emotion.sourceExcerpt}`;
+        return !existingKeys.has(key);
+      });
+      return newEmotions.length
+        ? {
+            ...observation,
+            detectedEmotions: [...observation.detectedEmotions, ...newEmotions],
+            updatedAt: now,
+            enginesExecuted: [...new Set([...observation.enginesExecuted, "EmotionExtractor"])],
+            engineResultsSummary: [...observation.engineResultsSummary, `${newEmotions.length} emotion(s) proposee(s) apres reanalyse.`]
+          }
+        : observation;
+    });
+    props.updateStudy({
+      ...selected,
+      observations: updatedObservations,
+      structuredHistory: [
+        ...(selected.structuredHistory ?? []),
+        {
+          id: `history-${crypto.randomUUID()}`,
+          date: now,
+          actionType: "observation modifiee",
+          objectType: "Study",
+          objectId: selected.id,
+          sourceObservationIds: (selected.observations ?? []).map((observation) => observation.id),
+          summary: "Reanalyse emotionnelle des observations existantes ; nouvelles propositions conservees sans validation automatique."
+        }
+      ]
+    });
+  }
+
+  function updateObservationEmotionStatus(
+    observationId: string,
+    emotionId: string,
+    status: "accepted" | "rejected"
+  ) {
+    if (!selected) return;
+    const now = new Date().toISOString();
+    const observation = (selected.observations ?? []).find((item) => item.id === observationId);
+    const emotion = observation?.detectedEmotions.find((item) => item.id === emotionId);
+    if (!observation || !emotion) return;
+    const emotionObservationId = `emotion-observation-${crypto.randomUUID()}`;
+    const emotionObservation = status === "accepted" && !selected.emotionObservations.some((item) => item.validatedProposalIds?.includes(emotion.id))
+      ? {
+          id: emotionObservationId,
+          emotion: emotion.label,
+          canonicalEmotion: emotion.canonicalEmotion ?? emotion.emotion,
+          originalExpression: emotion.originalExpression ?? emotion.label,
+          expressionKind: emotion.expressionKind,
+          sourceKind: emotion.sourceKind,
+          polarity: emotion.polarity ?? "present",
+          scope: emotion.scope ?? "indeterminate",
+          intensity: 5,
+          date: now.slice(0, 10),
+          context: emotion.sourceExcerpt,
+          duration: "non renseigne",
+          comment: emotion.reason,
+          sourceObservationIds: [observation.id],
+          sourceExcerpt: emotion.sourceExcerpt,
+          validatedProposalIds: [emotion.id],
+          engineProvenance: ["EmotionExtractor"],
+          createdFromObservationAt: now,
+          confidence: emotion.confidence,
+          methodologicalStatus: "Emotion validee apres reanalyse utilisateur"
+        }
+      : null;
+    props.updateStudy({
+      ...selected,
+      observations: (selected.observations ?? []).map((item) =>
+        item.id === observationId
+          ? {
+              ...item,
+              detectedEmotions: item.detectedEmotions.map((candidate) =>
+                candidate.id === emotionId ? { ...candidate, status } : candidate
+              ),
+              generatedEmotionIds: emotionObservation ? [...item.generatedEmotionIds, emotionObservation.id] : item.generatedEmotionIds,
+              updatedAt: now
+            }
+          : item
+      ),
+      emotionObservations: emotionObservation ? [...selected.emotionObservations, emotionObservation] : selected.emotionObservations,
+      structuredHistory: [
+        ...(selected.structuredHistory ?? []),
+        {
+          id: `history-${crypto.randomUUID()}`,
+          date: now,
+          actionType: status === "accepted" ? "proposition acceptee" : "proposition rejetee",
+          objectType: "DetectedEmotion",
+          objectId: emotion.id,
+          sourceObservationIds: [observation.id],
+          summary: status === "accepted" ? "Emotion proposee acceptee apres reanalyse." : "Emotion proposee rejetee apres reanalyse."
+        }
+      ]
+    });
+  }
   return (
     <div className="grid gap-4 xl:grid-cols-[340px_1fr]">
       <Panel title="Liste des études">
@@ -1158,6 +1328,8 @@ function Studies(props: {
               onSortChange={setJournalSort}
               onEdit={updateObservationRawText}
               onArchive={archiveObservation}
+              onReanalyze={reanalyzeStudyObservations}
+              onEmotionStatus={updateObservationEmotionStatus}
             />
           )}
           {tab === "timeline" && <Timeline events={buildTimeline(selected)} />}
@@ -1395,8 +1567,13 @@ function Emotions({ study }: { study?: Study }) {
           {study.emotionObservations.map((emotion) => (
             <div key={emotion.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
               <div className="flex items-center justify-between">
-                <p className="font-medium text-white">{emotion.emotion}</p>
+                <p className="font-medium text-white">{emotion.canonicalEmotion ?? emotion.emotion}</p>
                 <Badge>{emotion.intensity}/10</Badge>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Badge>{emotion.polarity ?? "present"}</Badge>
+                <Badge>{emotion.scope ?? "indeterminate"}</Badge>
+                <Badge>{emotion.originalExpression ?? emotion.emotion}</Badge>
               </div>
               <p className="mt-2 text-sm text-stone-300">{emotion.context}</p>
               <p className="mt-2 text-xs text-stone-500">{emotion.date} · {emotion.duration}</p>
@@ -1599,6 +1776,12 @@ function differenceColor(kind: string) {
   if (kind === "removal" || kind === "potential-contradiction") return "border-red-400/35 bg-red-400/10";
   if (kind === "stabilization") return "border-sky-400/35 bg-sky-400/10";
   return "border-white/10 bg-white/[0.04]";
+}
+
+function formatBuildDate(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString("fr-FR");
 }
 
 function hasPendingProposals(draft: ObservationAnalysisDraft) {

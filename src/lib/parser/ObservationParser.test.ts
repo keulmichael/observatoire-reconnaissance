@@ -28,7 +28,7 @@ describe("ObservationParser", () => {
 
   it("detects a quoted or reported emotion without adding a diagnosis", () => {
     const draft = parseObservation(demoObservation, "2026-07-15T10:00:00.000Z");
-    const emotion = draft.detectedEmotions.find((item) => item.emotion.toLowerCase() === "perdue");
+    const emotion = draft.detectedEmotions.find((item) => item.originalExpression?.toLowerCase() === "perdue");
 
     expect(emotion).toMatchObject({
       expressionKind: "exprimee directement",
@@ -113,7 +113,7 @@ describe("ObservationParser", () => {
 
     expect(draft.detectedManifestations.map((item) => item.label)).toContain("presentation d'un cadre de reflexion");
     expect(draft.detectedPeople.map((item) => item.entityText)).toContain("une personne");
-    expect(draft.detectedEmotions.map((item) => item.emotion.toLowerCase())).toContain("perdue");
+    expect(draft.detectedEmotions.map((item) => item.originalExpression?.toLowerCase())).toContain("perdue");
     expect(draft.chronology.map((item) => item.temporalMarker)).toEqual(expect.arrayContaining(["Hier", "Aujourd'hui"]));
     expect(draft.conclusion).toBe(
       "Variation ou perturbation possible observee, mais donnees insuffisantes pour construire une transition Delta complete."

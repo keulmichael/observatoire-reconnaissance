@@ -165,14 +165,14 @@ function suggestStudies(draft: ObservationAnalysisDraft, studies: Study[]) {
 
 function DetectedPanel({ draft }: { draft: ObservationAnalysisDraft }) {
   return (
-    <Panel title="Ce que l'application a détecté">
+    <Panel title="Ce que l'application a detecte">
       <div className="grid gap-4">
+        <EmotionDetectionPanel draft={draft} />
         <div className="grid gap-3 md:grid-cols-2">
-          <DetectedList title="Personnes détectées" items={draft.detectedPeople.map((item) => item.label)} />
-          <DetectedList title="Manifestations détectées" items={draft.detectedManifestations.map((item) => item.label)} />
-          <DetectedList title="Émotions détectées" items={draft.detectedEmotions.map((item) => `${item.label} · ${item.expressionKind}`)} />
-          <DetectedList title="Catalyseurs proposés" items={draft.detectedCatalysts.map((item) => item.label)} />
-          <DetectedList title="Concepts détectés" items={draft.detectedConcepts.map((item) => item.label)} />
+          <DetectedList title="Personnes detectees" items={draft.detectedPeople.map((item) => item.label)} />
+          <DetectedList title="Manifestations detectees" items={draft.detectedManifestations.map((item) => item.label)} />
+          <DetectedList title="Catalyseurs proposes" items={draft.detectedCatalysts.map((item) => item.label)} />
+          <DetectedList title="Concepts detectes" items={draft.detectedConcepts.map((item) => item.label)} />
           <DetectedList title="Relations possibles" items={draft.relationProposals.map((item) => item.label)} />
         </div>
         <ObservationTimeline entries={draft.chronology} />
@@ -184,6 +184,35 @@ function DetectedPanel({ draft }: { draft: ObservationAnalysisDraft }) {
   );
 }
 
+function EmotionDetectionPanel({ draft }: { draft: ObservationAnalysisDraft }) {
+  return (
+    <div>
+      <h3 className="mb-2 text-xs uppercase tracking-[0.18em] text-stone-500">Emotions ou etats detectes</h3>
+      {draft.detectedEmotions.length ? (
+        <div className="grid gap-2">
+          {draft.detectedEmotions.map((emotion) => (
+            <div key={emotion.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-white">{emotion.originalExpression ?? emotion.label}</p>
+                <Badge>{emotion.canonicalEmotion ?? emotion.emotion}</Badge>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Badge>{emotion.scope ?? "indeterminate"}</Badge>
+                <Badge>{emotion.polarity ?? "present"}</Badge>
+                <Badge>{Math.round(emotion.confidence * 100)} %</Badge>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-stone-300">{emotion.sourceExcerpt}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm text-stone-400">
+          Aucune emotion explicite detectee dans ce texte.
+        </p>
+      )}
+    </div>
+  );
+}
 function DetectedList({ title, items }: { title: string; items: string[] }) {
   return (
     <div>
@@ -194,3 +223,4 @@ function DetectedList({ title, items }: { title: string; items: string[] }) {
     </div>
   );
 }
+

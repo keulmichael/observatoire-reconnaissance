@@ -145,6 +145,12 @@ export interface Relation {
 export interface EmotionObservation {
   id: string;
   emotion: string;
+  canonicalEmotion?: string;
+  originalExpression?: string;
+  expressionKind?: DetectedEmotion["expressionKind"];
+  sourceKind?: DetectedEmotion["sourceKind"];
+  polarity?: EmotionPolarity;
+  scope?: EmotionScope;
   intensity: number;
   date: string;
   context: string;
@@ -282,8 +288,12 @@ export interface DetectedManifestation extends ObservationProposalBase {
 
 export interface DetectedEmotion extends ObservationProposalBase {
   emotion: string;
+  canonicalEmotion?: string;
+  originalExpression?: string;
   expressionKind: "exprimee directement" | "attribuee par le narrateur" | "supposee";
   sourceKind: "citation" | "discours rapporte" | "narration" | "inconnue";
+  polarity?: EmotionPolarity;
+  scope?: EmotionScope;
 }
 
 export interface DetectedCatalyst extends ObservationProposalBase {
@@ -604,6 +614,8 @@ export interface TrajectoryComparison {
 }
 
 export type StateScope = "individuel" | "groupe" | "collectif" | "institutionnel" | "indetermine";
+export type EmotionPolarity = "present" | "absent" | "negated" | "uncertain";
+export type EmotionScope = "individual" | "group" | "collective" | "indeterminate";
 export type LongitudinalComparisonStatus = "propose" | "valide" | "modifie" | "rejete";
 export type LongitudinalConfidence = "faible" | "moyen" | "eleve";
 

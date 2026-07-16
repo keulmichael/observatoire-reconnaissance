@@ -105,6 +105,12 @@ function buildScientificArtifacts(draft: ObservationAnalysisDraft, now: string):
   const emotions = draft.detectedEmotions.filter(isIntegrated).map((item): EmotionObservation => ({
     id: stableId("emotion-observation", `${draft.id}-${item.id}-${item.label}`),
     emotion: item.label,
+    canonicalEmotion: item.canonicalEmotion ?? item.emotion,
+    originalExpression: item.originalExpression ?? item.emotion,
+    expressionKind: item.expressionKind,
+    sourceKind: item.sourceKind,
+    polarity: item.polarity ?? "present",
+    scope: item.scope ?? "indeterminate",
     intensity: 5,
     date: now.slice(0, 10),
     context: item.sourceExcerpt,

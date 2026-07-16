@@ -12,6 +12,7 @@ import type {
   Study
 } from "../types";
 import { stableId } from "../parser/ObservationParser";
+import { detectFrenchEmotionExpressions, normalizeFrench } from "../parser/french-emotion-patterns";
 
 export const LONGITUDINAL_OBSERVATION_ENGINE_VERSION = "LongitudinalObservationEngine:v1";
 
@@ -125,8 +126,8 @@ function dimensionsFromRecord(record: ObservationRecord): ObservationDimensions 
       ...matches(text, /(les francais|les gens|population|habitants|personnes|quelques personnes)/gi)
     ]),
     emotion: unique([
-      ...record.detectedEmotions.map((emotion) => emotion.label),
-      ...matches(text, /(inquietude|s'inquietent|inquiets|emotion|impassibles?|aucune emotion|pas de reaction|sans reaction)/gi)
+      ...record.detectedEmotions.map((emotion) => emotion.canonicalEmotion ?? emotion.label),
+      ...detectFrenchEmotionExpressions(text).map((emotion) => emotion.canonicalEmotion)
     ]),
     intensiteEmotionnelle: unique(matches(text, /(faible|forte|intense|particuliere|impassibles?|prets a s'impliquer|aucune emotion)/gi)),
     comportement: unique(matches(text, /(ne montrent pas|lance|ont lance|s'impliquer|sauvegarde|reagir|reaction|actions?)/gi)),
@@ -272,7 +273,7 @@ function scopeLabels(text: string): string[] {
 }
 
 function emotionStateLabel(value: string, phase: "anterieur" | "actuel") {
-  if (/aucune emotion|pas de reaction|impassibles?|sans reaction/i.test(value)) return "faible emotion declaree";
+  if (/absence de reaction|aucune emotion|pas de reaction|impassibles?|sans reaction/i.test(value)) return "faible emotion declaree";
   if (/inquiet/i.test(value)) return "inquietude pour les animaux";
   return phase === "anterieur" ? `emotion anterieure declaree : ${value}` : `emotion actuelle declaree : ${value}`;
 }
@@ -322,15 +323,10 @@ function unique(values: string[]) {
 }
 
 function normalizeValue(value: string) {
-  return value
-    .toLowerCase()
-    .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "")
-    .replace(/[’']/g, "'")
-    .replace(/\s+/g, " ")
-    .trim();
+  return normalizeFrench(value);
 }
 
 function excerpt(record: ObservationRecord) {
   return record.sourceExcerpts[0] ?? record.rawText.slice(0, 320);
 }
+
