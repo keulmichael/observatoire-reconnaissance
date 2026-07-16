@@ -2,7 +2,9 @@
 
 import { Save } from "lucide-react";
 import { Badge, Panel } from "@/components/ui";
-import type { ObservationAnalysisDraft, Study } from "@/lib/types";
+import type { MergedObservationItem, ObservationAISettings, ObservationAnalysisDraft, Study } from "@/lib/types";
+import { observationAICollectionKeys } from "@/lib/ai/ObservationAISchema";
+import { parserDraftToAIResponse } from "@/lib/ai/ObservationMerge";
 import { ObservationQuestions } from "./ObservationQuestions";
 import { ObservationSummary } from "./ObservationSummary";
 import { ObservationTimeline } from "./ObservationTimeline";
@@ -16,7 +18,8 @@ export function ObservationAnalysis({
   onTargetStudyChange,
   onTargetStudySearchChange,
   onChange,
-  onValidate
+  onValidate,
+  aiSettings
 }: {
   draft: ObservationAnalysisDraft;
   studies: Study[];
@@ -26,11 +29,12 @@ export function ObservationAnalysis({
   onTargetStudySearchChange: (value: string) => void;
   onChange: (draft: ObservationAnalysisDraft) => void;
   onValidate: () => void;
+  aiSettings: ObservationAISettings;
 }) {
   return (
     <div className="grid gap-4">
       <ObservationSummary rawText={draft.rawText} />
-      <DetectedPanel draft={draft} />
+      <HybridObservationPanel draft={draft} aiSettings={aiSettings} />
       <ObservationValidation draft={draft} onChange={onChange} />
       <ObservationQuestions questions={draft.confirmationQuestions} />
       <StudyTargetSelector
@@ -46,6 +50,96 @@ export function ObservationAnalysis({
           <Save className="h-4 w-4" aria-hidden />
           Valider et intégrer à une étude
         </button>
+      </div>
+    </div>
+  );
+}
+
+function HybridObservationPanel({
+  draft,
+  aiSettings
+}: {
+  draft: ObservationAnalysisDraft;
+  aiSettings: ObservationAISettings;
+}) {
+  const parser = parserDraftToAIResponse(draft);
+  const parserItems = observationAICollectionKeys.flatMap((key) => parser[key].map((item) => ({ ...item, bucket: key })));
+  const aiItems = observationAICollectionKeys.flatMap((key) => (draft.aiAnalysis?.[key] ?? []).map((item) => ({ ...item, bucket: key })));
+  const mergedItems = observationAICollectionKeys.flatMap((key) => (draft.mergedObservation?.[key] ?? []).map((item) => ({ ...item, bucket: key })));
+
+  return (
+    <div className="grid gap-4">
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Panel title="Analyse deterministe">
+          <ObservationItemList items={parserItems} empty="Aucune proposition deterministe." />
+        </Panel>
+        <Panel title="Analyse IA">
+          <div className="mb-3 flex flex-wrap gap-2">
+            <Badge>{draft.observationMode === "ai-assisted" ? "IA assistee" : "Mode local"}</Badge>
+            {draft.aiStatus ? <Badge>{draft.aiStatus}</Badge> : null}
+          </div>
+          {draft.aiStatus === "offline" || draft.aiStatus === "error" ? (
+            <p className="mb-3 rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-400">
+              Aucun fournisseur IA n&apos;a produit de lecture. L&apos;analyse locale reste disponible.
+            </p>
+          ) : null}
+          <ObservationItemList items={aiItems} empty="Aucune proposition IA." />
+          {aiSettings.showReasoningSummary && draft.aiAnalysis?.reasoningSummary ? (
+            <p className="mt-3 rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
+              {draft.aiAnalysis.reasoningSummary}
+            </p>
+          ) : null}
+        </Panel>
+      </div>
+      <Panel title="Fusion proposee">
+        <ObservationItemList items={mergedItems} empty="Aucune fusion disponible." />
+        {aiSettings.showParserAIDifferences && draft.mergedObservation ? (
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <TraceList title="Convergences" items={draft.mergedObservation.convergences} />
+            <TraceList title="Differences" items={draft.mergedObservation.differences} />
+          </div>
+        ) : null}
+      </Panel>
+      <DetectedPanel draft={draft} />
+    </div>
+  );
+}
+
+function ObservationItemList({
+  items,
+  empty
+}: {
+  items: Array<{ id: string; label: string; type: string; excerpt: string; confidence: number; reason: string; source: string; status: string; bucket: string; mergeStatus?: string }>;
+  empty: string;
+}) {
+  if (!items.length) return <p className="text-sm text-stone-500">{empty}</p>;
+  return (
+    <div className="grid gap-2">
+      {items.map((item) => (
+        <div key={`${item.bucket}-${item.id}`} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-medium text-white">{item.label}</p>
+            <div className="flex flex-wrap gap-2">
+              <Badge>{item.bucket}</Badge>
+              <Badge>{item.source}</Badge>
+              {item.mergeStatus ? <Badge>{item.mergeStatus}</Badge> : null}
+              <Badge>{Math.round(item.confidence * 100)} %</Badge>
+            </div>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-stone-300">{item.excerpt}</p>
+          <p className="mt-2 text-xs leading-5 text-stone-500">{item.reason}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TraceList({ title, items }: { title: string; items: MergedObservationItem[] }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+      <h3 className="mb-2 text-xs uppercase tracking-[0.18em] text-stone-500">{title}</h3>
+      <div className="flex flex-wrap gap-2">
+        {items.length ? items.map((item) => <Badge key={item.id}>{item.label}</Badge>) : <span className="text-sm text-stone-500">Aucun element</span>}
       </div>
     </div>
   );

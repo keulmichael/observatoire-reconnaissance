@@ -22,6 +22,7 @@ import {
   RefreshCw,
   Save,
   Search,
+  SlidersHorizontal,
   Sparkles,
   TrendingUp,
   Trash2
@@ -36,7 +37,7 @@ import {
   compareStates,
   exportStudy
 } from "@/lib/analytics";
-import type { AppView, ObservationAnalysisDraft, Study, TransitionStage } from "@/lib/types";
+import type { AppView, ObservationAISettings, ObservationAnalysisDraft, Study, TransitionStage } from "@/lib/types";
 import { RecognitionCharts } from "@/components/recognition-charts";
 import { ObservationAnalysis } from "@/components/journal/ObservationAnalysis";
 import { ObservationFollowup } from "@/components/journal/ObservationFollowup";
@@ -46,6 +47,7 @@ import { ReflexivityDashboardEngine } from "@/lib/engines/ReflexivityDashboardEn
 import { StateDifferenceEngine } from "@/lib/engines/StateDifferenceEngine";
 import { TrajectoryEngine } from "@/lib/engines/TrajectoryEngine";
 import { parseObservation } from "@/lib/parser/ObservationParser";
+import { analyzeWithObservationAI, defaultAISettings } from "@/lib/ai/ObservationAI";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "journal", label: "Journal d'Observation", icon: ClipboardList },
@@ -109,6 +111,10 @@ export default function ObservatoryApp() {
     exportAll,
     updateMap,
     observationDrafts,
+    aiSettings,
+    aiObservationResults,
+    updateAISettings,
+    saveAIObservationResult,
     saveObservationDraft,
     integrateObservationDraft
   } = useObservatory();
@@ -119,6 +125,7 @@ export default function ObservatoryApp() {
   const [integrationNotice, setIntegrationNotice] = useState("");
   const [targetStudyId, setTargetStudyId] = useState<string | "new">("new");
   const [targetStudySearch, setTargetStudySearch] = useState("");
+  const effectiveAISettings = aiSettings ?? defaultAISettings;
   const dashboard = useMemo(() => buildDashboard(data), [data]);
   const analysis = useMemo(() => buildAnalysis(data), [data]);
   const reflexivityDashboard = useMemo(() => ReflexivityDashboardEngine.build(data), [data]);
@@ -128,11 +135,17 @@ export default function ObservatoryApp() {
     `${study.title} ${study.subject} ${study.description}`.toLowerCase().includes(query.toLowerCase())
   );
 
-  function analyzeObservation() {
+  async function analyzeObservation() {
     const draft = parseObservation(observationText);
-    saveObservationDraft(draft);
-    setCurrentDraft(draft);
-    setTargetStudyId(suggestStudies(draft, data.studies)[0]?.id ?? "new");
+    const result = await analyzeWithObservationAI({
+      draft,
+      settings: effectiveAISettings,
+      cache: aiObservationResults
+    });
+    saveObservationDraft(result.draft);
+    if (effectiveAISettings.keepResponses) saveAIObservationResult(result.result);
+    setCurrentDraft(result.draft);
+    setTargetStudyId(suggestStudies(result.draft, data.studies)[0]?.id ?? "new");
     setIntegrationNotice("");
   }
 
@@ -264,6 +277,8 @@ export default function ObservatoryApp() {
               setTargetStudyId={setTargetStudyId}
               setTargetStudySearch={setTargetStudySearch}
               validateObservation={validateObservation}
+              aiSettings={effectiveAISettings}
+              onAISettingsChange={updateAISettings}
             />
           )}
           {view === "followup" && <ObservationFollowup drafts={observationDrafts} study={selectedStudy} />}
@@ -334,7 +349,9 @@ function Journal({
   updateCurrentDraft,
   setTargetStudyId,
   setTargetStudySearch,
-  validateObservation
+  validateObservation,
+  aiSettings,
+  onAISettingsChange
 }: {
   observationText: string;
   setObservationText: (value: string) => void;
@@ -343,14 +360,17 @@ function Journal({
   targetStudyId: string | "new";
   targetStudySearch: string;
   integrationNotice: string;
-  analyzeObservation: () => void;
+  analyzeObservation: () => void | Promise<void>;
   updateCurrentDraft: (draft: ObservationAnalysisDraft) => void;
   setTargetStudyId: (value: string | "new") => void;
   setTargetStudySearch: (value: string) => void;
   validateObservation: () => void;
+  aiSettings: ObservationAISettings;
+  onAISettingsChange: (settings: ObservationAISettings) => void;
 }) {
   return (
     <div className="grid gap-4">
+      <ObservationAISettingsPanel settings={aiSettings} onChange={onAISettingsChange} />
       <ObservationInput value={observationText} onChange={setObservationText} onAnalyze={analyzeObservation} />
       {currentDraft ? (
         <ObservationAnalysis
@@ -362,6 +382,7 @@ function Journal({
           onTargetStudySearchChange={setTargetStudySearch}
           onChange={updateCurrentDraft}
           onValidate={validateObservation}
+          aiSettings={aiSettings}
         />
       ) : null}
       {integrationNotice ? (
@@ -370,6 +391,81 @@ function Journal({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ObservationAISettingsPanel({
+  settings,
+  onChange
+}: {
+  settings: ObservationAISettings;
+  onChange: (settings: ObservationAISettings) => void;
+}) {
+  function patch(partial: Partial<ObservationAISettings>) {
+    onChange({ ...settings, ...partial });
+  }
+
+  return (
+    <Panel title="Parametres d'observation">
+      <div className="grid gap-4">
+        <div className="flex flex-wrap items-center gap-2">
+          <SlidersHorizontal className="h-4 w-4 text-goldSoft" aria-hidden />
+          <button
+            className={`rounded-md border px-3 py-2 text-sm ${settings.mode === "local" ? "border-gold/60 bg-gold/10 text-goldSoft" : "border-white/10 text-stone-200"}`}
+            onClick={() => patch({ mode: "local" })}
+          >
+            Local
+          </button>
+          <button
+            className={`rounded-md border px-3 py-2 text-sm ${settings.mode === "ai-assisted" ? "border-gold/60 bg-gold/10 text-goldSoft" : "border-white/10 text-stone-200"}`}
+            onClick={() => patch({ mode: "ai-assisted" })}
+          >
+            IA assistee
+          </button>
+        </div>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="grid gap-2">
+            <span className="text-sm font-medium text-stone-200">Modele</span>
+            <input
+              className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+              value={settings.model}
+              onChange={(event) => patch({ model: event.target.value })}
+            />
+          </label>
+          <label className="grid gap-2">
+            <span className="text-sm font-medium text-stone-200">Temperature</span>
+            <input
+              className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+              type="number"
+              min="0"
+              max="1"
+              step="0.1"
+              value={settings.temperature}
+              onChange={(event) => patch({ temperature: Number(event.target.value) })}
+            />
+          </label>
+        </div>
+        <div className="grid gap-2 md:grid-cols-2">
+          <Toggle label="Conserver les reponses IA" checked={settings.keepResponses} onChange={(value) => patch({ keepResponses: value })} />
+          <Toggle label="Reanalyser automatiquement" checked={settings.autoReanalyze} onChange={(value) => patch({ autoReanalyze: value })} />
+          <Toggle label="Afficher le raisonnement resume" checked={settings.showReasoningSummary} onChange={(value) => patch({ showReasoningSummary: value })} />
+          <Toggle label="Afficher differences Parser / IA" checked={settings.showParserAIDifferences} onChange={(value) => patch({ showParserAIDifferences: value })} />
+          <Toggle label="Autoriser l'IA a utiliser toute l'etude" checked={settings.allowFullStudyContext} onChange={(value) => patch({ allowFullStudyContext: value })} />
+        </div>
+        <p className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-400">
+          Par defaut, seule l&apos;observation courante peut etre transmise a un fournisseur IA configure. Le moteur scientifique reste local et deterministe.
+        </p>
+      </div>
+    </Panel>
+  );
+}
+
+function Toggle({ label, checked, onChange }: { label: string; checked: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <label className="flex items-center gap-3 rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm text-stone-200">
+      <input className="h-4 w-4 accent-[#d7b56d]" type="checkbox" checked={checked} onChange={(event) => onChange(event.target.checked)} />
+      {label}
+    </label>
   );
 }
 

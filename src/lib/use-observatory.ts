@@ -22,7 +22,7 @@ export function useObservatory() {
   }, []);
 
   useEffect(() => {
-    if (data.studies.length) repository.save(data);
+    repository.save(data);
   }, [data]);
 
   const selectedStudy = useMemo(
@@ -149,6 +149,24 @@ export function useObservatory() {
     });
   }
 
+  function updateAISettings(settings: NonNullable<ObservatoryData["aiSettings"]>) {
+    setData((current) => ({
+      ...current,
+      aiSettings: settings
+    }));
+  }
+
+  function saveAIObservationResult(result: NonNullable<ObservatoryData["aiObservationResults"]>[number]) {
+    setData((current) => {
+      const results = current.aiObservationResults ?? [];
+      if (results.some((item) => item.id === result.id || item.promptHash === result.promptHash)) return current;
+      return {
+        ...current,
+        aiObservationResults: [result, ...results].slice(0, 50)
+      };
+    });
+  }
+
   function integrateObservationDraft(draft: ObservationAnalysisDraft, targetStudyId: string | "new" = "new") {
     const validatedDraft: ObservationAnalysisDraft = { ...draft, status: "validated" };
     const targetStudy = data.studies.find((study) => study.id === targetStudyId);
@@ -186,6 +204,10 @@ export function useObservatory() {
     exportAll,
     updateMap,
     observationDrafts: data.observationDrafts ?? [],
+    aiSettings: data.aiSettings,
+    aiObservationResults: data.aiObservationResults ?? [],
+    updateAISettings,
+    saveAIObservationResult,
     saveObservationDraft,
     integrateObservationDraft
   };
