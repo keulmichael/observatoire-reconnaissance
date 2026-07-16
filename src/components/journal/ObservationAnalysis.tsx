@@ -62,7 +62,7 @@ function HybridObservationPanel({
   draft: ObservationAnalysisDraft;
   aiSettings: ObservationAISettings;
 }) {
-  const parser = parserDraftToAIResponse(draft);
+  const parser = draft.deterministicAnalysis ?? parserDraftToAIResponse(draft);
   const parserItems = observationAICollectionKeys.flatMap((key) => parser[key].map((item) => ({ ...item, bucket: key })));
   const aiItems = observationAICollectionKeys.flatMap((key) => (draft.aiAnalysis?.[key] ?? []).map((item) => ({ ...item, bucket: key })));
   const mergedItems = observationAICollectionKeys.flatMap((key) => (draft.mergedObservation?.[key] ?? []).map((item) => ({ ...item, bucket: key })));
@@ -109,7 +109,7 @@ function ObservationItemList({
   items,
   empty
 }: {
-  items: Array<{ id: string; label: string; type: string; excerpt: string; confidence: number; reason: string; source: string; status: string; bucket: string; mergeStatus?: string }>;
+  items: Array<{ id: string; label: string; type: string; excerpt: string; confidence: number; reason: string; source: string; status: string; bucket: string; mergeStatus?: string; model?: string; createdAt?: string; latency?: number }>;
   empty: string;
 }) {
   if (!items.length) return <p className="text-sm text-stone-500">{empty}</p>;
@@ -121,10 +121,16 @@ function ObservationItemList({
             <p className="font-medium text-white">{item.label}</p>
             <div className="flex flex-wrap gap-2">
               <Badge>{item.bucket}</Badge>
-              <Badge>{item.source}</Badge>
+              <Badge>{sourceLabel(item.source)}</Badge>
               {item.mergeStatus ? <Badge>{item.mergeStatus}</Badge> : null}
+              <Badge>{item.status}</Badge>
               <Badge>{Math.round(item.confidence * 100)} %</Badge>
             </div>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-2 text-xs text-stone-400">
+            <span>Modele : {"model" in item && item.model ? item.model : "local"}</span>
+            <span>Date : {"createdAt" in item && item.createdAt ? item.createdAt : "analyse locale"}</span>
+            <span>Latence : {"latency" in item && item.latency ? `${item.latency} ms` : "non renseignee"}</span>
           </div>
           <p className="mt-2 text-sm leading-6 text-stone-300">{item.excerpt}</p>
           <p className="mt-2 text-xs leading-5 text-stone-500">{item.reason}</p>
@@ -132,6 +138,13 @@ function ObservationItemList({
       ))}
     </div>
   );
+}
+
+function sourceLabel(source: string) {
+  if (source === "parser") return "Parser local";
+  if (source === "ai") return "IA";
+  if (source === "parser+ai") return "Parser + IA";
+  return source;
 }
 
 function TraceList({ title, items }: { title: string; items: MergedObservationItem[] }) {

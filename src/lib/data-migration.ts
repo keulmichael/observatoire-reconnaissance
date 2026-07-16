@@ -118,9 +118,15 @@ export function recordFromDraft(
     sourceExcerpts: [...new Set(proposals(draft).map((item) => item.sourceExcerpt).filter(Boolean))],
     openQuestions,
     aiResultId: draft.aiResultId,
+    deterministicAnalysis: draft.deterministicAnalysis,
     aiAnalysis: draft.aiAnalysis,
     mergedObservation: draft.mergedObservation,
-    observationMode: draft.observationMode
+    observationMode: draft.observationMode,
+    aiStatus: draft.aiStatus,
+    aiError: draft.aiError,
+    aiLatency: draft.aiLatency,
+    aiModel: draft.aiModel,
+    aiAnalyzedAt: draft.aiAnalyzedAt
   };
 }
 

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { checkAIConnection } from "./AIConnectionStatus";
 import { migrateObservatoryData } from "../data-migration";
 import { parseObservation } from "../parser/ObservationParser";
 import type { AIProvider } from "./ObservationAI";
@@ -143,6 +144,39 @@ describe("Observation Intelligence Layer", () => {
 
     expect(result.result.model).toBe("local-test-model");
     expect(result.result.tokenUsage.totalTokens).toBe(42);
+  });
+
+  it("reports missing server configuration without exposing an API key", async () => {
+    const previous = process.env.OPENAI_API_KEY;
+    delete process.env.OPENAI_API_KEY;
+    const status = await checkAIConnection("test-model");
+    if (previous) process.env.OPENAI_API_KEY = previous;
+
+    expect(status.configured).toBe(false);
+    expect(status.reachable).toBe(false);
+    expect(status.provider).toBe("openai");
+    expect(JSON.stringify(status)).not.toContain("sk-");
+  });
+
+  it("keeps local proposals and exposes the AI error when provider analysis fails", async () => {
+    const failingProvider: AIProvider = {
+      id: "failing",
+      async analyze() {
+        throw new Error("provider unavailable");
+      }
+    };
+    const draft = parseObservation("Une situation provoque une inquietude.");
+    const result = await analyzeWithObservationAI({
+      draft,
+      settings: { ...defaultAISettings, mode: "ai-assisted" },
+      provider: failingProvider
+    });
+
+    expect(result.result.status).toBe("error");
+    expect(result.draft.aiError).toBe("provider unavailable");
+    expect(result.draft.aiAnalysis).toBeUndefined();
+    expect(result.draft.deterministicAnalysis?.manifestations.length).toBeGreaterThan(0);
+    expect(result.draft.mergedObservation?.manifestations.every((item) => item.mergeStatus === "parser-only")).toBe(true);
   });
 });
 

@@ -34,7 +34,7 @@ export class OpenAIProvider implements AIProvider {
     if (!this.apiKey) {
       throw new Error("Fournisseur OpenAI non configure. Aucun appel IA n'a ete effectue.");
     }
-    const result = await fetch("https://api.openai.com/v1/responses", {
+    const result = await fetch("https://api.openai.com/v1/chat/completions", {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -43,8 +43,17 @@ export class OpenAIProvider implements AIProvider {
       body: JSON.stringify({
         model: input.model,
         temperature: input.temperature,
-        input: input.prompt,
-        text: { format: { type: "json_object" } }
+        messages: [
+          {
+            role: "system",
+            content: "Tu reponds uniquement avec un objet JSON valide."
+          },
+          {
+            role: "user",
+            content: input.prompt
+          }
+        ],
+        response_format: { type: "json_object" }
       })
     });
     if (!result.ok) throw new Error(`OpenAIProvider error ${result.status}`);
@@ -53,8 +62,8 @@ export class OpenAIProvider implements AIProvider {
     return {
       response: JSON.parse(text),
       tokenUsage: {
-        promptTokens: payload.usage?.input_tokens,
-        completionTokens: payload.usage?.output_tokens,
+        promptTokens: payload.usage?.prompt_tokens,
+        completionTokens: payload.usage?.completion_tokens,
         totalTokens: payload.usage?.total_tokens
       }
     };
@@ -83,7 +92,7 @@ export async function analyzeWithObservationAI({
     const result = buildResult(promptHash, settings.model, now, null, 0, "disabled");
     const mergedObservation = mergeObservationAnalyses(parserAnalysis, null, now);
     return {
-      draft: { ...applyMergedObservationToDraft(draft, mergedObservation), observationMode: "local", aiStatus: result.status, mergedObservation },
+      draft: { ...applyMergedObservationToDraft(draft, mergedObservation), observationMode: "local", deterministicAnalysis: parserAnalysis, aiStatus: result.status, aiLatency: result.latency, aiModel: result.model, aiAnalyzedAt: result.createdAt, mergedObservation },
       result,
       cache
     };
@@ -96,9 +105,13 @@ export async function analyzeWithObservationAI({
       draft: {
         ...applyMergedObservationToDraft(draft, mergedObservation),
         observationMode: "ai-assisted",
+        deterministicAnalysis: parserAnalysis,
         aiAnalysis: cached.response ?? undefined,
         aiResultId: cached.id,
         aiStatus: result.status,
+        aiLatency: result.latency,
+        aiModel: result.model,
+        aiAnalyzedAt: result.createdAt,
         mergedObservation
       },
       result,
@@ -110,7 +123,7 @@ export async function analyzeWithObservationAI({
     const result = buildResult(promptHash, settings.model, now, null, 0, "offline", "Aucun fournisseur IA disponible.");
     const mergedObservation = mergeObservationAnalyses(parserAnalysis, null, now);
     return {
-      draft: { ...applyMergedObservationToDraft(draft, mergedObservation), observationMode: "ai-assisted", aiStatus: result.status, mergedObservation },
+      draft: { ...applyMergedObservationToDraft(draft, mergedObservation), observationMode: "ai-assisted", deterministicAnalysis: parserAnalysis, aiStatus: result.status, aiError: result.error, aiLatency: result.latency, aiModel: result.model, aiAnalyzedAt: result.createdAt, mergedObservation },
       result,
       cache: settings.keepResponses ? [result, ...cache] : cache
     };
@@ -119,16 +132,21 @@ export async function analyzeWithObservationAI({
   const start = Date.now();
   try {
     const output = await provider.analyze({ prompt, model: settings.model, temperature: settings.temperature });
-    const response = normalizeAIResponse(output.response, { model: settings.model, promptHash, createdAt: now });
-    const result = buildResult(promptHash, settings.model, now, response, Date.now() - start, "success", undefined, output.tokenUsage);
+    const latency = Date.now() - start;
+    const response = normalizeAIResponse(output.response, { model: settings.model, promptHash, createdAt: now, latency });
+    const result = buildResult(promptHash, settings.model, now, response, latency, "success", undefined, output.tokenUsage);
     const mergedObservation = mergeObservationAnalyses(parserAnalysis, response, now);
     return {
       draft: {
         ...applyMergedObservationToDraft(draft, mergedObservation),
         observationMode: "ai-assisted",
+        deterministicAnalysis: parserAnalysis,
         aiAnalysis: response,
         aiResultId: result.id,
         aiStatus: result.status,
+        aiLatency: result.latency,
+        aiModel: result.model,
+        aiAnalyzedAt: result.createdAt,
         mergedObservation
       },
       result,
@@ -138,7 +156,7 @@ export async function analyzeWithObservationAI({
     const result = buildResult(promptHash, settings.model, now, null, Date.now() - start, "error", error instanceof Error ? error.message : "Erreur IA");
     const mergedObservation = mergeObservationAnalyses(parserAnalysis, null, now);
     return {
-      draft: { ...applyMergedObservationToDraft(draft, mergedObservation), observationMode: "ai-assisted", aiStatus: result.status, mergedObservation },
+      draft: { ...applyMergedObservationToDraft(draft, mergedObservation), observationMode: "ai-assisted", deterministicAnalysis: parserAnalysis, aiStatus: result.status, aiError: result.error, aiLatency: result.latency, aiModel: result.model, aiAnalyzedAt: result.createdAt, mergedObservation },
       result,
       cache: settings.keepResponses ? [result, ...cache] : cache
     };
@@ -170,6 +188,7 @@ function buildResult(
   return {
     id: stableId("ai-result", `${promptHash}-${createdAt}-${status}`),
     promptHash,
+    provider: "openai",
     model,
     createdAt,
     response,
@@ -180,7 +199,9 @@ function buildResult(
   };
 }
 
-function extractResponseText(payload: { output_text?: string; output?: Array<{ content?: Array<{ text?: string }> }> }) {
+function extractResponseText(payload: { choices?: Array<{ message?: { content?: string } }>; output_text?: string; output?: Array<{ content?: Array<{ text?: string }> }> }) {
+  const chatText = payload.choices?.[0]?.message?.content;
+  if (chatText) return chatText;
   if (payload.output_text) return payload.output_text;
   const text = payload.output?.flatMap((item) => item.content ?? []).map((content) => content.text).filter(Boolean).join("\n");
   if (!text) throw new Error("Reponse IA vide.");

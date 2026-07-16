@@ -47,11 +47,11 @@ export function emptyAIResponse(): ObservationAIResponse {
   };
 }
 
-export function parseAIResponseJSON(value: string, metadata?: { model?: string; promptHash?: string; createdAt?: string }): ObservationAIResponse {
+export function parseAIResponseJSON(value: string, metadata?: { model?: string; promptHash?: string; createdAt?: string; latency?: number }): ObservationAIResponse {
   return normalizeAIResponse(JSON.parse(value), metadata);
 }
 
-export function normalizeAIResponse(input: unknown, metadata?: { model?: string; promptHash?: string; createdAt?: string }): ObservationAIResponse {
+export function normalizeAIResponse(input: unknown, metadata?: { model?: string; promptHash?: string; createdAt?: string; latency?: number }): ObservationAIResponse {
   if (!input || typeof input !== "object") {
     throw new Error("La reponse IA doit etre un objet JSON.");
   }
@@ -74,7 +74,7 @@ function normalizeProposal(
   input: unknown,
   fallbackType: string,
   index: number,
-  metadata?: { model?: string; promptHash?: string; createdAt?: string }
+  metadata?: { model?: string; promptHash?: string; createdAt?: string; latency?: number }
 ): AIObservationProposal {
   const record = input && typeof input === "object" ? (input as Record<string, unknown>) : {};
   const label = text(record.label) || text(record.id) || `${fallbackType}-${index + 1}`;
@@ -91,7 +91,8 @@ function normalizeProposal(
     model: metadata?.model,
     version: metadata?.model,
     promptHash: metadata?.promptHash,
-    createdAt: metadata?.createdAt
+    createdAt: metadata?.createdAt,
+    latency: metadata?.latency
   };
 }
 

@@ -343,9 +343,14 @@ export interface ObservationAnalysisDraft {
   methodologicalStatus: ObservationMethodStatus;
   conclusion: string;
   observationMode?: ObservationMode;
+  deterministicAnalysis?: ObservationAIResponse;
   aiAnalysis?: ObservationAIResponse;
   aiResultId?: string;
   aiStatus?: AIObservationResult["status"];
+  aiError?: string;
+  aiLatency?: number;
+  aiModel?: string;
+  aiAnalyzedAt?: string;
   mergedObservation?: MergedObservationAnalysis;
 }
 
@@ -379,6 +384,7 @@ export interface AIObservationProposal {
   version?: string;
   promptHash?: string;
   createdAt?: string;
+  latency?: number;
   userValidation?: {
     status: Exclude<AIProposalStatus, "proposed">;
     validatedAt: string;
@@ -413,6 +419,7 @@ export type ObservationAIResponse = Record<ObservationAICollectionKey, AIObserva
 export interface AIObservationResult {
   id: string;
   promptHash: string;
+  provider: ObservationAISettings["provider"];
   model: string;
   createdAt: string;
   response: ObservationAIResponse | null;
@@ -424,6 +431,18 @@ export interface AIObservationResult {
   latency: number;
   status: "success" | "cached" | "error" | "offline" | "disabled";
   error?: string;
+}
+
+export interface AIConnectionStatus {
+  configured: boolean;
+  provider: ObservationAISettings["provider"];
+  reachable: boolean;
+  model: string;
+  mode: "local" | "assisted";
+  message: string;
+  latency: number | null;
+  checkedAt: string;
+  lastError?: string;
 }
 
 export interface MergedObservationItem extends AIObservationProposal {
@@ -484,9 +503,15 @@ export interface ObservationRecord {
   sourceExcerpts: string[];
   openQuestions: OpenQuestion[];
   aiResultId?: string;
+  deterministicAnalysis?: ObservationAIResponse;
   aiAnalysis?: ObservationAIResponse;
   mergedObservation?: MergedObservationAnalysis;
   observationMode?: ObservationMode;
+  aiStatus?: AIObservationResult["status"];
+  aiError?: string;
+  aiLatency?: number;
+  aiModel?: string;
+  aiAnalyzedAt?: string;
 }
 
 export interface OpenQuestion {
