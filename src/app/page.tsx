@@ -2286,7 +2286,7 @@ function differenceColor(kind: string) {
 function formatBuildDate(value: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleDateString("fr-FR");
+  return date.toISOString().slice(0, 10);
 }
 
 function hasPendingProposals(draft: ObservationAnalysisDraft) {
