@@ -59,8 +59,47 @@ export class OpenAIProvider implements AIProvider {
     if (!result.ok) throw new Error(`OpenAIProvider error ${result.status}`);
     const payload = await result.json();
     const text = extractResponseText(payload);
+    const response = JSON.parse(text);
+    const corrected = needsSolidarityCorrection(input.prompt, response)
+      ? await this.correctSolidarityBehaviours(input, response)
+      : null;
     return {
-      response: JSON.parse(text),
+      response: corrected?.response ?? response,
+      tokenUsage: {
+        promptTokens: sumTokens(payload.usage?.prompt_tokens, corrected?.tokenUsage?.promptTokens),
+        completionTokens: sumTokens(payload.usage?.completion_tokens, corrected?.tokenUsage?.completionTokens),
+        totalTokens: sumTokens(payload.usage?.total_tokens, corrected?.tokenUsage?.totalTokens)
+      }
+    };
+  }
+
+  private async correctSolidarityBehaviours(input: AIProviderInput, previousResponse: unknown): Promise<AIProviderOutput> {
+    const result = await fetch("https://api.openai.com/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${this.apiKey}`
+      },
+      body: JSON.stringify({
+        model: input.model,
+        temperature: 0,
+        messages: [
+          { role: "system", content: "Tu reponds uniquement avec un objet JSON valide conforme au schema deja demande." },
+          { role: "user", content: input.prompt },
+          { role: "assistant", content: JSON.stringify(previousResponse) },
+          {
+            role: "user",
+            content:
+              "Corrige uniquement la collection behaviours. Le texte mentionne des actions de solidarite : elle doit contenir deux elements distincts avec les labels exacts Mobilisation et Solidarite. Conserve le reste du JSON."
+          }
+        ],
+        response_format: { type: "json_object" }
+      })
+    });
+    if (!result.ok) throw new Error(`OpenAIProvider correction error ${result.status}`);
+    const payload = await result.json();
+    return {
+      response: JSON.parse(extractResponseText(payload)),
       tokenUsage: {
         promptTokens: payload.usage?.prompt_tokens,
         completionTokens: payload.usage?.completion_tokens,
@@ -206,4 +245,22 @@ function extractResponseText(payload: { choices?: Array<{ message?: { content?: 
   const text = payload.output?.flatMap((item) => item.content ?? []).map((content) => content.text).filter(Boolean).join("\n");
   if (!text) throw new Error("Reponse IA vide.");
   return text;
+}
+
+function needsSolidarityCorrection(prompt: string, response: unknown) {
+  if (!/actions?\s+de\s+solidarit/i.test(prompt)) return false;
+  const behaviours = response && typeof response === "object" && Array.isArray((response as { behaviours?: unknown }).behaviours)
+    ? ((response as { behaviours: Array<{ label?: unknown }> }).behaviours)
+    : [];
+  const labels = behaviours.map((item) => (typeof item.label === "string" ? normalize(item.label) : ""));
+  return !labels.includes("mobilisation") || !labels.includes("solidarite");
+}
+
+function normalize(value: string) {
+  return value.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+}
+
+function sumTokens(left?: number, right?: number) {
+  if (left === undefined && right === undefined) return undefined;
+  return (left ?? 0) + (right ?? 0);
 }
