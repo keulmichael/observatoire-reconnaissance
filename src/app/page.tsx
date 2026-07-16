@@ -482,6 +482,7 @@ const studyTabs = [
   { id: "timeline", label: "Chronologie" },
   { id: "objects", label: "Objets" },
   { id: "states", label: "Etats" },
+  { id: "longitudinal", label: "Changements" },
   { id: "comparisons", label: "Comparaisons" },
   { id: "transitions", label: "Transitions" },
   { id: "delta", label: "Delta" },
@@ -500,7 +501,7 @@ function StudyOverview({ study }: { study: Study }) {
         <StatCard label="Observations" value={study.observations?.length ?? 0} />
         <StatCard label="Etats" value={study.states.length} />
         <StatCard label="Transitions" value={study.transitions.length} />
-        <StatCard label="Questions ouvertes" value={(study.openQuestions ?? []).filter((question) => question.status === "ouverte").length} />
+        <StatCard label="Changements proposes" value={(study.longitudinalComparisons ?? []).filter((item) => item.status === "propose").length} />
       </div>
       <Panel title="Parcours de l'etude">
         <p className="text-sm leading-6 text-stone-300">
@@ -594,9 +595,10 @@ function ObservationImpact({ observationId, study }: { observationId: string; st
   const states = study.states.filter((item) => item.sourceObservationIds?.includes(observationId));
   const transitions = study.transitions.filter((item) => item.sourceObservationIds?.includes(observationId));
   const deltas = (study.deltaScores ?? []).filter((item) => item.sourceObservationIds.includes(observationId));
+  const longitudinalComparisons = (study.longitudinalComparisons ?? []).filter((item) => item.sourceObservationIds.includes(observationId));
   return (
     <div className="mt-3 rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
-      Ce que cette observation a change : {states.length} etat(s), {transitions.length} transition(s), {deltas.length} Delta(s). {states.length || transitions.length || deltas.length ? "" : "Aucune transition complete n'a ete creee, car les donnees restent insuffisantes."}
+      Comparaison avec les observations anterieures de cette etude : {longitudinalComparisons.length} proposition(s). Ce que cette observation a change : {states.length} etat(s), {transitions.length} transition(s), {deltas.length} Delta(s). {states.length || transitions.length || deltas.length || longitudinalComparisons.length ? "" : "Aucune transition complete n'a ete creee, car les donnees restent insuffisantes."}
     </div>
   );
 }
@@ -722,6 +724,104 @@ function StudyStates({ study, updateStudy }: { study: Study; updateStudy: (study
         </Panel>
       ))}
     </div>
+  );
+}
+
+function StudyLongitudinalComparisons({ study, updateStudy }: { study: Study; updateStudy: (study: Study) => void }) {
+  const comparisons = study.longitudinalComparisons ?? [];
+
+  function updateComparisonStatus(
+    id: string,
+    status: NonNullable<Study["longitudinalComparisons"]>[number]["status"]
+  ) {
+    const comparison = comparisons.find((item) => item.id === id);
+    if (!comparison) return;
+    const now = new Date().toISOString();
+    updateStudy({
+      ...study,
+      longitudinalComparisons: comparisons.map((item) =>
+        item.id === id ? { ...item, status, comparedAt: status === "propose" ? item.comparedAt : item.comparedAt } : item
+      ),
+      structuredHistory: [
+        ...(study.structuredHistory ?? []),
+        {
+          id: `history-${crypto.randomUUID()}`,
+          date: now,
+          actionType: status === "valide" ? "transition generee" : "comparaison longitudinale",
+          objectType: "LongitudinalObservationComparison",
+          objectId: id,
+          sourceObservationIds: comparison.sourceObservationIds,
+          summary:
+            status === "valide"
+              ? "Comparaison longitudinale validee comme transition potentielle par l'utilisateur."
+              : `Comparaison longitudinale ${status}.`
+        }
+      ]
+    });
+  }
+
+  return (
+    <Panel title="Changements detectes entre observations">
+      {comparisons.length ? (
+        <div className="grid gap-4">
+          {comparisons.map((comparison) => {
+            const previous = comparison.previousObservationId
+              ? (study.observations ?? []).find((observation) => observation.id === comparison.previousObservationId)
+              : null;
+            const current = (study.observations ?? []).find((observation) => observation.id === comparison.currentObservationId);
+            return (
+              <div key={comparison.id} className="rounded-md border border-white/10 bg-white/[0.04] p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="font-semibold text-white">{comparison.potentialTransition ?? "Comparaison avec les observations anterieures de cette etude"}</h3>
+                    <p className="mt-1 text-sm text-stone-400">{comparison.comparedAt} · {comparison.engineVersion}</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <Badge>{comparison.status}</Badge>
+                    <Badge>Confiance {comparison.confidence}</Badge>
+                  </div>
+                </div>
+                <p className="mt-3 rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
+                  {comparison.conclusion}
+                </p>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <TraceBlock title="Observation anterieure" items={previous ? [previous.rawText] : ["Aucune comparaison suffisante"]} />
+                  <TraceBlock title="Observation actuelle" items={current ? [current.rawText] : [comparison.currentObservationId]} />
+                </div>
+                <div className="mt-4 grid gap-3 md:grid-cols-2">
+                  <TraceBlock title="Etat anterieur propose" items={comparison.proposedPreviousState?.elements ?? ["Non propose"]} />
+                  <TraceBlock title="Etat actuel propose" items={comparison.proposedCurrentState?.elements ?? ["Non propose"]} />
+                </div>
+                <TraceBlock
+                  title="Dimensions comparees"
+                  items={comparison.dimensionsCompared.map((dimension) =>
+                    `${dimension.label} : avant [${dimension.previous.join(", ") || "non renseigne"}] / actuel [${dimension.current.join(", ") || "non renseigne"}]`
+                  )}
+                />
+                <TraceBlock title="Differences" items={comparison.differences.map((difference) => difference.summary)} />
+                <TraceBlock title="Limites" items={comparison.methodologicalLimits} />
+                <TraceBlock title="Donnees manquantes" items={comparison.missingData} />
+                <TraceBlock title="Questions de confirmation" items={comparison.confirmationQuestions} />
+                <TraceBlock title="Extraits sources" items={comparison.sourceExcerpts.map((item) => `${item.observationId} : ${item.excerpt}`)} />
+                <div className="mt-4 flex flex-wrap gap-2">
+                  <button className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={() => updateComparisonStatus(comparison.id, "valide")}>
+                    Valider comme transition
+                  </button>
+                  <button className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => updateComparisonStatus(comparison.id, "modifie")}>
+                    Modifier
+                  </button>
+                  <button className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-200" onClick={() => updateComparisonStatus(comparison.id, "rejete")}>
+                    Rejeter
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <SmartEmpty text="Aucune comparaison suffisante pour le moment. Une comparaison sera produite apres chaque nouvelle observation." />
+      )}
+    </Panel>
   );
 }
 
@@ -1063,6 +1163,7 @@ function Studies(props: {
           {tab === "timeline" && <Timeline events={buildTimeline(selected)} />}
           {tab === "objects" && <StudyObjects study={selected} updateStudy={props.updateStudy} />}
           {tab === "states" && <StudyStates study={selected} updateStudy={props.updateStudy} />}
+          {tab === "longitudinal" && <StudyLongitudinalComparisons study={selected} updateStudy={props.updateStudy} />}
           {tab === "comparisons" && <StateComparison study={selected} />}
           {tab === "transitions" && <StudyTransitions study={selected} />}
           {tab === "delta" && <StudyDelta study={selected} />}

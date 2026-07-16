@@ -54,6 +54,7 @@ export interface Study {
   structuredHistory?: HistoryEntry[];
   relationProposals?: PersistentRelationProposal[];
   deltaScores?: PersistentDeltaScore[];
+  longitudinalComparisons?: LongitudinalObservationComparison[];
   createdAt: string;
   updatedAt: string;
 }
@@ -62,6 +63,7 @@ export interface UnderstandingState {
   id: string;
   title: string;
   date: string;
+  scope?: StateScope;
   formulation: string;
   stability: number;
   confidence: number;
@@ -368,6 +370,7 @@ export interface ObservationRecord {
   generatedRecognitionIds: string[];
   generatedTimelineEventIds: string[];
   generatedDeltaIds: string[];
+  generatedLongitudinalComparisonIds?: string[];
   enginesExecuted: string[];
   engineResultsSummary: string[];
   methodologicalWarnings: string[];
@@ -398,6 +401,7 @@ export interface HistoryEntry {
     | "etat valide"
     | "transition generee"
     | "delta calcule"
+    | "comparaison longitudinale"
     | "relation validee"
     | "import"
     | "suppression"
@@ -597,4 +601,77 @@ export interface TrajectoryComparison {
   comparedDimensions: string[];
   excludedDimensions: string[];
   limits: string[];
+}
+
+export type StateScope = "individuel" | "groupe" | "collectif" | "institutionnel" | "indetermine";
+export type LongitudinalComparisonStatus = "propose" | "valide" | "modifie" | "rejete";
+export type LongitudinalConfidence = "faible" | "moyen" | "eleve";
+
+export type LongitudinalDimensionKey =
+  | "sujet"
+  | "population"
+  | "emotion"
+  | "intensiteEmotionnelle"
+  | "comportement"
+  | "mobilisation"
+  | "decision"
+  | "objetAttention"
+  | "concepts"
+  | "relations"
+  | "localisation"
+  | "temporalite"
+  | "portee";
+
+export interface LongitudinalDimensionSnapshot {
+  key: LongitudinalDimensionKey;
+  label: string;
+  previous: string[];
+  current: string[];
+}
+
+export interface ProposedObservedState {
+  scope: StateScope;
+  evidenceLevel: LongitudinalConfidence;
+  summary: string;
+  elements: string[];
+}
+
+export interface LongitudinalDifference {
+  dimension: LongitudinalDimensionKey;
+  label: string;
+  previous: string[];
+  current: string[];
+  summary: string;
+}
+
+export interface ComparableObservation {
+  observationId: string;
+  createdAt: string;
+  relevanceScore: number;
+  sharedDimensions: LongitudinalDimensionKey[];
+  sourceExcerpt: string;
+}
+
+export interface LongitudinalObservationComparison {
+  id: string;
+  studyId: string;
+  sourceObservationIds: string[];
+  previousObservationId?: string;
+  currentObservationId: string;
+  comparableObservations: ComparableObservation[];
+  dimensionsCompared: LongitudinalDimensionSnapshot[];
+  differences: LongitudinalDifference[];
+  proposedPreviousState: ProposedObservedState | null;
+  proposedCurrentState: ProposedObservedState | null;
+  potentialTransition: string | null;
+  missingData: string[];
+  methodologicalLimits: string[];
+  confirmationQuestions: string[];
+  sourceExcerpts: Array<{ observationId: string; excerpt: string }>;
+  comparedAt: string;
+  engine: "LongitudinalObservationEngine";
+  engineVersion: string;
+  status: LongitudinalComparisonStatus;
+  confidence: LongitudinalConfidence;
+  conclusion: string;
 }

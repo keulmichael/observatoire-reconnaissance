@@ -26,7 +26,8 @@ export function normalizeStudy(study: Study): Study {
     openQuestions: study.openQuestions ?? [],
     structuredHistory: study.structuredHistory ?? legacyHistory(study),
     relationProposals: study.relationProposals ?? [],
-    deltaScores: study.deltaScores ?? []
+    deltaScores: study.deltaScores ?? [],
+    longitudinalComparisons: study.longitudinalComparisons ?? []
   };
 }
 
@@ -43,6 +44,7 @@ export function recordFromDraft(
     recognitionIds: string[];
     timelineEventIds: string[];
     deltaIds: string[];
+    longitudinalComparisonIds?: string[];
   },
   now: string
 ): ObservationRecord {
@@ -94,17 +96,20 @@ export function recordFromDraft(
     generatedRecognitionIds: generated.recognitionIds,
     generatedTimelineEventIds: generated.timelineEventIds,
     generatedDeltaIds: generated.deltaIds,
+    generatedLongitudinalComparisonIds: generated.longitudinalComparisonIds ?? [],
     enginesExecuted: [
       "ObservationParser",
       "StateDifferenceEngine",
       "DeltaEngine",
       "RelationEngine",
-      "TrajectoryEngine"
+      "TrajectoryEngine",
+      "LongitudinalObservationEngine"
     ],
     engineResultsSummary: [
       draft.conclusion,
       generated.transitionIds.length ? "Transition creee." : "Transition non creee.",
-      generated.deltaIds.length ? "Delta calcule." : "Delta non disponible."
+      generated.deltaIds.length ? "Delta calcule." : "Delta non disponible.",
+      generated.longitudinalComparisonIds?.length ? "Comparaison longitudinale produite." : "Comparaison longitudinale non disponible."
     ],
     methodologicalWarnings: draft.analysisWarnings,
     sourceExcerpts: [...new Set(proposals(draft).map((item) => item.sourceExcerpt).filter(Boolean))],
