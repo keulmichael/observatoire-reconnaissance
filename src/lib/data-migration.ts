@@ -1,6 +1,7 @@
 import type {
   HistoryEntry,
   ObservationAnalysisDraft,
+  LongitudinalObservationComparison,
   ObservationRecord,
   ObservatoryData,
   PersistentDeltaScore,
@@ -30,8 +31,37 @@ export function normalizeStudy(study: Study): Study {
     structuredHistory: study.structuredHistory ?? legacyHistory(study),
     relationProposals: study.relationProposals ?? [],
     deltaScores: study.deltaScores ?? [],
-    longitudinalComparisons: study.longitudinalComparisons ?? []
+    longitudinalComparisons: (study.longitudinalComparisons ?? []).map((comparison) => normalizeLongitudinalComparison(comparison, study.id))
   };
+}
+
+function normalizeLongitudinalComparison(
+  comparison: LongitudinalObservationComparison,
+  studyId: string
+): LongitudinalObservationComparison {
+  const createdAt = comparison.createdAt ?? comparison.comparedAt;
+  return {
+    ...comparison,
+    studyId: comparison.studyId || studyId,
+    title: comparison.title ?? comparison.potentialTransition ?? "Comparaison longitudinale",
+    previousStateProposal: comparison.previousStateProposal ?? comparison.proposedPreviousState,
+    currentStateProposal: comparison.currentStateProposal ?? comparison.proposedCurrentState,
+    detectedDifferences: comparison.detectedDifferences ?? comparison.differences,
+    limitations: comparison.limitations ?? comparison.methodologicalLimits,
+    questions: comparison.questions ?? comparison.confirmationQuestions,
+    engineProvenance: comparison.engineProvenance ?? [comparison.engineVersion],
+    createdAt,
+    updatedAt: comparison.updatedAt ?? createdAt,
+    status: normalizeLongitudinalStatus(comparison.status)
+  };
+}
+
+function normalizeLongitudinalStatus(status: LongitudinalObservationComparison["status"]): LongitudinalObservationComparison["status"] {
+  if (status === "propose") return "proposed";
+  if (status === "modifie") return "edited";
+  if (status === "valide") return "validated";
+  if (status === "rejete") return "rejected";
+  return status;
 }
 
 export function recordFromDraft(

@@ -93,7 +93,7 @@ export const LongitudinalObservationEngine = {
       comparedAt: now,
       engine: "LongitudinalObservationEngine",
       engineVersion: LONGITUDINAL_OBSERVATION_ENGINE_VERSION,
-      status: "propose" satisfies LongitudinalComparisonStatus,
+      status: "proposed" satisfies LongitudinalComparisonStatus,
       confidence,
       conclusion
     };

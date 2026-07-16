@@ -18,7 +18,7 @@ describe("LongitudinalObservationEngine", () => {
 
     expect(result.previousObservationId).toBe(previous.id);
     expect(result.potentialTransition).toBe("Changement potentiel detecte dans les reactions collectives decrites.");
-    expect(result.status).toBe("propose");
+    expect(result.status).toBe("proposed");
   });
 
   it("detects emotion, mobilization, action and attention shifts in the Fontainebleau case", () => {

@@ -48,6 +48,14 @@ import { StateDifferenceEngine } from "@/lib/engines/StateDifferenceEngine";
 import { TrajectoryEngine } from "@/lib/engines/TrajectoryEngine";
 import { parseObservation } from "@/lib/parser/ObservationParser";
 import { analyzeWithObservationAI, defaultAISettings } from "@/lib/ai/ObservationAI";
+import {
+  editLongitudinalComparison,
+  normalizeComparison,
+  normalizeStatus,
+  rejectLongitudinalComparison,
+  validateLongitudinalComparison,
+  type LongitudinalEditPatch
+} from "@/lib/longitudinal-review";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "journal", label: "Journal d'Observation", icon: ClipboardList },
@@ -1041,56 +1049,115 @@ function StudyStates({ study, updateStudy }: { study: Study; updateStudy: (study
 }
 
 function StudyLongitudinalComparisons({ study, updateStudy }: { study: Study; updateStudy: (study: Study) => void }) {
-  const comparisons = study.longitudinalComparisons ?? [];
+  const comparisons = (study.longitudinalComparisons ?? []).map(normalizeComparison);
+  const [filter, setFilter] = useState<"active" | "validated" | "edited" | "rejected">("active");
+  const [busyId, setBusyId] = useState<string | null>(null);
+  const [notice, setNotice] = useState("");
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState<LongitudinalEditingState | null>(null);
 
-  function updateComparisonStatus(
-    id: string,
-    status: NonNullable<Study["longitudinalComparisons"]>[number]["status"]
-  ) {
-    const comparison = comparisons.find((item) => item.id === id);
-    if (!comparison) return;
-    const now = new Date().toISOString();
-    updateStudy({
-      ...study,
-      longitudinalComparisons: comparisons.map((item) =>
-        item.id === id ? { ...item, status, comparedAt: status === "propose" ? item.comparedAt : item.comparedAt } : item
-      ),
-      structuredHistory: [
-        ...(study.structuredHistory ?? []),
-        {
-          id: `history-${crypto.randomUUID()}`,
-          date: now,
-          actionType: status === "valide" ? "transition generee" : "comparaison longitudinale",
-          objectType: "LongitudinalObservationComparison",
-          objectId: id,
-          sourceObservationIds: comparison.sourceObservationIds,
-          summary:
-            status === "valide"
-              ? "Comparaison longitudinale validee comme transition potentielle par l'utilisateur."
-              : `Comparaison longitudinale ${status}.`
-        }
-      ]
+  const filteredComparisons = comparisons.filter((comparison) => {
+    const status = normalizeStatus(comparison.status);
+    if (filter === "active") return status === "proposed" || status === "edited";
+    return status === filter;
+  });
+
+  function runAction(id: string, action: () => { study: Study; message: string }) {
+    if (busyId) return;
+    setBusyId(id);
+    setError("");
+    setNotice("");
+    try {
+      const result = action();
+      updateStudy(result.study);
+      setNotice(result.message);
+    } catch (caught) {
+      const message = caught instanceof Error ? caught.message : "Action impossible.";
+      console.error("longitudinal-review-action", { id, message });
+      setError(message);
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  function openEdit(comparison: NonNullable<Study["longitudinalComparisons"]>[number]) {
+    const normalized = normalizeComparison(comparison);
+    const currentPatch = longitudinalEditPatchFromComparison(normalized);
+    const initialPatch = normalized.initialVersion ? longitudinalEditPatchFromInitialVersion(normalized.initialVersion, currentPatch) : currentPatch;
+    setEditing({ ...currentPatch, id: normalized.id, initial: initialPatch });
+  }
+
+  function saveEdit() {
+    if (!editing) return;
+    runAction(editing.id, () => {
+      const result = editLongitudinalComparison(study, editing.id, editing);
+      setEditing(null);
+      return result;
     });
+  }
+
+  function validateComparison(id: string) {
+    if (!window.confirm("Valider cette proposition comme transition persistante ?")) return;
+    runAction(id, () => validateLongitudinalComparison(study, id));
+  }
+
+  function rejectComparison(id: string) {
+    const reason = window.prompt(
+      "Motif du rejet : comparaison non pertinente, donnees insuffisantes, mauvaise interpretation, observations non comparables, autre",
+      "donnees insuffisantes"
+    );
+    if (reason === null) return;
+    runAction(id, () => rejectLongitudinalComparison(study, id, reason));
   }
 
   return (
     <Panel title="Changements detectes entre observations">
-      {comparisons.length ? (
+      <div className="mb-4 flex flex-wrap gap-2">
+        {[
+          ["active", "A examiner"],
+          ["validated", "Validees"],
+          ["edited", "Modifiees"],
+          ["rejected", "Rejetees"]
+        ].map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`rounded-md border px-3 py-2 text-sm ${filter === id ? "border-gold/60 bg-gold/10 text-goldSoft" : "border-white/10 text-stone-200"}`}
+            onClick={() => setFilter(id as typeof filter)}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {notice ? <div className="mb-4 rounded-md border border-gold/25 bg-gold/10 p-3 text-sm text-goldSoft">{notice}</div> : null}
+      {error ? <div className="mb-4 rounded-md border border-red-400/30 bg-red-400/10 p-3 text-sm text-red-100">{error}</div> : null}
+      {editing ? (
+        <LongitudinalEditPanel
+          value={editing}
+          onChange={setEditing}
+          onSave={saveEdit}
+          onCancel={() => setEditing(null)}
+          disabled={busyId === editing.id}
+        />
+      ) : null}
+      {filteredComparisons.length ? (
         <div className="grid gap-4">
-          {comparisons.map((comparison) => {
+          {filteredComparisons.map((comparison) => {
+            const status = normalizeStatus(comparison.status);
             const previous = comparison.previousObservationId
               ? (study.observations ?? []).find((observation) => observation.id === comparison.previousObservationId)
               : null;
             const current = (study.observations ?? []).find((observation) => observation.id === comparison.currentObservationId);
+            const disabled = busyId === comparison.id;
             return (
               <div key={comparison.id} className="rounded-md border border-white/10 bg-white/[0.04] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <div>
-                    <h3 className="font-semibold text-white">{comparison.potentialTransition ?? "Comparaison avec les observations anterieures de cette etude"}</h3>
+                    <h3 className="font-semibold text-white">{comparison.title ?? comparison.potentialTransition ?? "Comparaison longitudinale"}</h3>
                     <p className="mt-1 text-sm text-stone-400">{comparison.comparedAt} · {comparison.engineVersion}</p>
                   </div>
                   <div className="flex flex-wrap gap-2">
-                    <Badge>{comparison.status}</Badge>
+                    <Badge>{longitudinalStatusLabel(status)}</Badge>
                     <Badge>Confiance {comparison.confidence}</Badge>
                   </div>
                 </div>
@@ -1102,8 +1169,8 @@ function StudyLongitudinalComparisons({ study, updateStudy }: { study: Study; up
                   <TraceBlock title="Observation actuelle" items={current ? [current.rawText] : [comparison.currentObservationId]} />
                 </div>
                 <div className="mt-4 grid gap-3 md:grid-cols-2">
-                  <TraceBlock title="Etat anterieur propose" items={comparison.proposedPreviousState?.elements ?? ["Non propose"]} />
-                  <TraceBlock title="Etat actuel propose" items={comparison.proposedCurrentState?.elements ?? ["Non propose"]} />
+                  <TraceBlock title="Etat anterieur propose" items={(comparison.previousStateProposal ?? comparison.proposedPreviousState)?.elements ?? ["Non propose"]} />
+                  <TraceBlock title="Etat actuel propose" items={(comparison.currentStateProposal ?? comparison.proposedCurrentState)?.elements ?? ["Non propose"]} />
                 </div>
                 <TraceBlock
                   title="Dimensions comparees"
@@ -1111,31 +1178,219 @@ function StudyLongitudinalComparisons({ study, updateStudy }: { study: Study; up
                     `${dimension.label} : avant [${dimension.previous.join(", ") || "non renseigne"}] / actuel [${dimension.current.join(", ") || "non renseigne"}]`
                   )}
                 />
-                <TraceBlock title="Differences" items={comparison.differences.map((difference) => difference.summary)} />
-                <TraceBlock title="Limites" items={comparison.methodologicalLimits} />
+                <TraceBlock title="Differences" items={(comparison.detectedDifferences ?? comparison.differences).map((difference) => difference.summary)} />
+                <TraceBlock title="Limites" items={comparison.limitations ?? comparison.methodologicalLimits} />
                 <TraceBlock title="Donnees manquantes" items={comparison.missingData} />
-                <TraceBlock title="Questions de confirmation" items={comparison.confirmationQuestions} />
+                <TraceBlock title="Questions de confirmation" items={comparison.questions ?? comparison.confirmationQuestions} />
                 <TraceBlock title="Extraits sources" items={comparison.sourceExcerpts.map((item) => `${item.observationId} : ${item.excerpt}`)} />
                 <div className="mt-4 flex flex-wrap gap-2">
-                  <button className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={() => updateComparisonStatus(comparison.id, "valide")}>
-                    Valider comme transition
-                  </button>
-                  <button className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => updateComparisonStatus(comparison.id, "modifie")}>
-                    Modifier
-                  </button>
-                  <button className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-200" onClick={() => updateComparisonStatus(comparison.id, "rejete")}>
-                    Rejeter
-                  </button>
+                  {status === "validated" && comparison.generatedTransitionId ? (
+                    <>
+                      <button type="button" className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={() => setNotice(`Transition : ${comparison.generatedTransitionId}`)}>
+                        Voir la transition
+                      </button>
+                      <button type="button" className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => setNotice(`Etats : ${(comparison.previousStateProposal ?? comparison.proposedPreviousState)?.summary ?? "etat anterieur"} / ${(comparison.currentStateProposal ?? comparison.proposedCurrentState)?.summary ?? "etat actuel"}`)}>
+                        Voir les etats
+                      </button>
+                      <button type="button" className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => setNotice(`Observations sources : ${comparison.sourceObservationIds.join(", ")}`)}>
+                        Voir les observations sources
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft disabled:opacity-50" disabled={disabled} onClick={() => validateComparison(comparison.id)}>
+                        {disabled ? "Traitement..." : "Valider comme transition"}
+                      </button>
+                      <button type="button" className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200 disabled:opacity-50" disabled={disabled} onClick={() => openEdit(comparison)}>
+                        Modifier
+                      </button>
+                      <button type="button" className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-200 disabled:opacity-50" disabled={disabled} onClick={() => rejectComparison(comparison.id)}>
+                        Rejeter
+                      </button>
+                    </>
+                  )}
+                  {comparison.generatedDeltaId ? (
+                    <button type="button" className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => setNotice(`Delta : ${comparison.generatedDeltaId}`)}>
+                      Voir Delta
+                    </button>
+                  ) : null}
                 </div>
               </div>
             );
           })}
         </div>
       ) : (
-        <SmartEmpty text="Aucune comparaison suffisante pour le moment. Une comparaison sera produite apres chaque nouvelle observation." />
+        <SmartEmpty text={comparisons.length ? "Aucune proposition dans ce filtre." : "Aucune comparaison suffisante pour le moment. Une comparaison sera produite apres chaque nouvelle observation."} />
       )}
     </Panel>
   );
+}
+
+type LongitudinalEditingState = LongitudinalEditPatch & { id: string; initial: LongitudinalEditPatch };
+
+function longitudinalEditPatchFromComparison(comparison: NonNullable<Study["longitudinalComparisons"]>[number]): LongitudinalEditPatch {
+  return {
+    title: comparison.title ?? comparison.potentialTransition ?? "Comparaison longitudinale",
+    conclusion: comparison.conclusion,
+    previousStateProposal: comparison.previousStateProposal ?? comparison.proposedPreviousState,
+    currentStateProposal: comparison.currentStateProposal ?? comparison.proposedCurrentState,
+    dimensionsCompared: comparison.dimensionsCompared,
+    detectedDifferences: comparison.detectedDifferences ?? comparison.differences,
+    confidence: comparison.confidence,
+    limitations: comparison.limitations ?? comparison.methodologicalLimits,
+    questions: comparison.questions ?? comparison.confirmationQuestions,
+    sourceExcerpts: comparison.sourceExcerpts
+  };
+}
+
+function longitudinalEditPatchFromInitialVersion(
+  initialVersion: NonNullable<NonNullable<Study["longitudinalComparisons"]>[number]["initialVersion"]>,
+  fallback: LongitudinalEditPatch
+): LongitudinalEditPatch {
+  return {
+    title: initialVersion.title ?? fallback.title,
+    conclusion: initialVersion.conclusion ?? fallback.conclusion,
+    previousStateProposal: initialVersion.proposedPreviousState ?? fallback.previousStateProposal,
+    currentStateProposal: initialVersion.proposedCurrentState ?? fallback.currentStateProposal,
+    dimensionsCompared: initialVersion.dimensionsCompared ?? fallback.dimensionsCompared,
+    detectedDifferences: initialVersion.differences ?? fallback.detectedDifferences,
+    confidence: initialVersion.confidence ?? fallback.confidence,
+    limitations: initialVersion.methodologicalLimits ?? fallback.limitations,
+    questions: initialVersion.confirmationQuestions ?? fallback.questions,
+    sourceExcerpts: initialVersion.sourceExcerpts ?? fallback.sourceExcerpts
+  };
+}
+
+function LongitudinalEditPanel({
+  value,
+  onChange,
+  onSave,
+  onCancel,
+  disabled
+}: {
+  value: LongitudinalEditingState;
+  onChange: (value: LongitudinalEditingState) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="mb-4 rounded-md border border-gold/25 bg-gold/10 p-4">
+      <h3 className="font-semibold text-white">Modifier la proposition</h3>
+      <div className="mt-3 grid gap-3">
+        <Field label="Titre" value={value.title} onChange={(title) => onChange({ ...value, title })} />
+        <Textarea label="Description du changement" value={value.conclusion} onChange={(conclusion) => onChange({ ...value, conclusion })} />
+        <Textarea
+          label="Etat anterieur propose"
+          value={value.previousStateProposal?.summary ?? ""}
+          onChange={(summary) =>
+            onChange({
+              ...value,
+              previousStateProposal: value.previousStateProposal
+                ? { ...value.previousStateProposal, summary, elements: splitLines(summary) }
+                : { scope: "indetermine", evidenceLevel: "faible", summary, elements: splitLines(summary) }
+            })
+          }
+        />
+        <Textarea
+          label="Etat actuel propose"
+          value={value.currentStateProposal?.summary ?? ""}
+          onChange={(summary) =>
+            onChange({
+              ...value,
+              currentStateProposal: value.currentStateProposal
+                ? { ...value.currentStateProposal, summary, elements: splitLines(summary) }
+                : { scope: "indetermine", evidenceLevel: "faible", summary, elements: splitLines(summary) }
+            })
+          }
+        />
+        <Textarea
+          label="Dimensions comparees"
+          value={value.dimensionsCompared.map((dimension) => `${dimension.label}: ${dimension.previous.join(", ")} -> ${dimension.current.join(", ")}`).join("\n")}
+          onChange={(text) => onChange({ ...value, dimensionsCompared: parseDimensionLines(text, value.dimensionsCompared) })}
+        />
+        <Textarea
+          label="Differences"
+          value={value.detectedDifferences.map((difference) => difference.summary).join("\n")}
+          onChange={(text) =>
+            onChange({
+              ...value,
+              detectedDifferences: splitLines(text).map((summary, index) => value.detectedDifferences[index] ? { ...value.detectedDifferences[index], summary } : {
+                dimension: "concepts",
+                label: "Difference utilisateur",
+                previous: [],
+                current: [],
+                summary
+              })
+            })
+          }
+        />
+        <label className="grid gap-2">
+          <span className="text-sm font-medium text-stone-200">Confiance utilisateur</span>
+          <select
+            className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+            value={value.confidence}
+            onChange={(event) => onChange({ ...value, confidence: event.target.value as LongitudinalEditPatch["confidence"] })}
+          >
+            <option className="bg-ink" value="faible">faible</option>
+            <option className="bg-ink" value="moyen">moyen</option>
+            <option className="bg-ink" value="eleve">eleve</option>
+          </select>
+        </label>
+        <Textarea label="Limites" value={value.limitations.join("\n")} onChange={(text) => onChange({ ...value, limitations: splitLines(text) })} />
+        <Textarea label="Questions ouvertes" value={value.questions.join("\n")} onChange={(text) => onChange({ ...value, questions: splitLines(text) })} />
+        <Textarea
+          label="Extraits sources selectionnes"
+          value={value.sourceExcerpts.map((item) => `${item.observationId}: ${item.excerpt}`).join("\n")}
+          onChange={(text) =>
+            onChange({
+              ...value,
+              sourceExcerpts: splitLines(text).map((line) => {
+                const [observationId, ...excerpt] = line.split(":");
+                return { observationId: observationId.trim(), excerpt: excerpt.join(":").trim() };
+              })
+            })
+          }
+        />
+      </div>
+      <div className="mt-4 flex flex-wrap gap-2">
+        <button type="button" className="rounded-md bg-gold px-3 py-2 text-sm font-semibold text-night disabled:opacity-50" disabled={disabled} onClick={onSave}>
+          Enregistrer
+        </button>
+        <button type="button" className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" disabled={disabled} onClick={onCancel}>
+          Annuler
+        </button>
+        <button type="button" className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" disabled={disabled} onClick={() => onChange({ ...value.initial, id: value.id, initial: value.initial })}>
+          Revenir a la proposition initiale
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function longitudinalStatusLabel(status: ReturnType<typeof normalizeStatus>) {
+  if (status === "validated") return "Validee";
+  if (status === "edited") return "Modifiee";
+  if (status === "rejected") return "Rejetee";
+  return "Proposition";
+}
+
+function splitLines(value: string) {
+  return value.split("\n").map((item) => item.trim()).filter(Boolean);
+}
+
+function parseDimensionLines(value: string, fallback: LongitudinalEditPatch["dimensionsCompared"]) {
+  return splitLines(value).map((line, index) => {
+    const [labelPart, values = ""] = line.split(":");
+    const [previous = "", current = ""] = values.split("->");
+    const base = fallback[index];
+    return {
+      key: base?.key ?? `user-dimension-${index + 1}`,
+      label: labelPart.trim() || base?.label || "Dimension utilisateur",
+      previous: previous.split(",").map((item) => item.trim()).filter(Boolean),
+      current: current.split(",").map((item) => item.trim()).filter(Boolean)
+    };
+  });
 }
 
 function StudyTransitions({ study }: { study: Study }) {

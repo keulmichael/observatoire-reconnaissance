@@ -742,7 +742,7 @@ export interface TrajectoryComparison {
 export type StateScope = "individuel" | "groupe" | "collectif" | "institutionnel" | "indetermine";
 export type EmotionPolarity = "present" | "absent" | "negated" | "uncertain";
 export type EmotionScope = "individual" | "group" | "collective" | "indeterminate";
-export type LongitudinalComparisonStatus = "propose" | "valide" | "modifie" | "rejete";
+export type LongitudinalComparisonStatus = "proposed" | "edited" | "validated" | "rejected" | "propose" | "valide" | "modifie" | "rejete";
 export type LongitudinalConfidence = "faible" | "moyen" | "eleve";
 
 export type LongitudinalDimensionKey =
@@ -796,20 +796,46 @@ export interface LongitudinalObservationComparison {
   sourceObservationIds: string[];
   previousObservationId?: string;
   currentObservationId: string;
+  title?: string;
   comparableObservations: ComparableObservation[];
   dimensionsCompared: LongitudinalDimensionSnapshot[];
   differences: LongitudinalDifference[];
   proposedPreviousState: ProposedObservedState | null;
   proposedCurrentState: ProposedObservedState | null;
+  previousStateProposal?: ProposedObservedState | null;
+  currentStateProposal?: ProposedObservedState | null;
+  detectedDifferences?: LongitudinalDifference[];
   potentialTransition: string | null;
   missingData: string[];
   methodologicalLimits: string[];
+  limitations?: string[];
   confirmationQuestions: string[];
+  questions?: string[];
   sourceExcerpts: Array<{ observationId: string; excerpt: string }>;
   comparedAt: string;
   engine: "LongitudinalObservationEngine";
   engineVersion: string;
+  engineProvenance?: string[];
+  createdAt?: string;
+  updatedAt?: string;
   status: LongitudinalComparisonStatus;
   confidence: LongitudinalConfidence;
   conclusion: string;
+  reviewedAt?: string;
+  rejectionReason?: string;
+  generatedTransitionId?: string;
+  generatedDeltaId?: string;
+  initialVersion?: {
+    title?: string;
+    conclusion: string;
+    proposedPreviousState: ProposedObservedState | null;
+    proposedCurrentState: ProposedObservedState | null;
+    dimensionsCompared: LongitudinalDimensionSnapshot[];
+    differences: LongitudinalDifference[];
+    methodologicalLimits: string[];
+    confirmationQuestions: string[];
+    sourceExcerpts: Array<{ observationId: string; excerpt: string }>;
+    confidence: LongitudinalConfidence;
+    savedAt: string;
+  };
 }
