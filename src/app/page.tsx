@@ -52,6 +52,7 @@ import {
   editLongitudinalComparison,
   normalizeComparison,
   normalizeStatus,
+  reanalyzeLongitudinalComparisons,
   rejectLongitudinalComparison,
   validateLongitudinalComparison,
   type LongitudinalEditPatch
@@ -768,7 +769,7 @@ function StudyOverview({ study }: { study: Study }) {
         <StatCard label="Observations" value={study.observations?.length ?? 0} />
         <StatCard label="Etats" value={study.states.length} />
         <StatCard label="Transitions" value={study.transitions.length} />
-        <StatCard label="Changements proposes" value={(study.longitudinalComparisons ?? []).filter((item) => item.status === "propose").length} />
+        <StatCard label="Changements proposes" value={(study.longitudinalComparisons ?? []).filter((item) => normalizeStatus(item.status) === "proposed").length} />
       </div>
       <Panel title="Parcours de l'etude">
         <p className="text-sm leading-6 text-stone-300">
@@ -823,7 +824,7 @@ function StudyJournal({
       </div>
       <div className="mb-4">
         <button className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={onReanalyze}>
-          Reanalyser les observations de cette etude
+          Reanalyser toute l&apos;etude
         </button>
       </div>
       {observations.length ? (
@@ -1140,6 +1141,7 @@ function StudyLongitudinalComparisons({ study, updateStudy }: { study: Study; up
           disabled={busyId === editing.id}
         />
       ) : null}
+      <CategorizedLongitudinalSections comparisons={filteredComparisons} />
       {filteredComparisons.length ? (
         <div className="grid gap-4">
           {filteredComparisons.map((comparison) => {
@@ -1149,6 +1151,7 @@ function StudyLongitudinalComparisons({ study, updateStudy }: { study: Study; up
               : null;
             const current = (study.observations ?? []).find((observation) => observation.id === comparison.currentObservationId);
             const disabled = busyId === comparison.id;
+            const canValidateTransition = comparison.resultStatus === "transition_candidate" || comparison.resultStatus === "observable_understanding_change";
             return (
               <div key={comparison.id} className="rounded-md border border-white/10 bg-white/[0.04] p-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1179,8 +1182,13 @@ function StudyLongitudinalComparisons({ study, updateStudy }: { study: Study; up
                   )}
                 />
                 <TraceBlock title="Differences" items={(comparison.detectedDifferences ?? comparison.differences).map((difference) => difference.summary)} />
+                <TraceBlock title="Perturbations et emotions" items={comparison.emotionalPerturbations ?? []} />
+                <TraceBlock title="Interpretations de l'observateur" items={comparison.observerInterpretations ?? []} />
+                <TraceBlock title="Formulations directes de la personne" items={comparison.directPersonFormulations ?? []} />
+                <TraceBlock title="Transformations observables" items={comparison.observableTransformations ?? []} />
                 <TraceBlock title="Limites" items={comparison.limitations ?? comparison.methodologicalLimits} />
                 <TraceBlock title="Donnees manquantes" items={comparison.missingData} />
+                <TraceBlock title="Raison de l'absence de transition" items={comparison.noTransitionReason ? [comparison.noTransitionReason] : []} />
                 <TraceBlock title="Questions de confirmation" items={comparison.questions ?? comparison.confirmationQuestions} />
                 <TraceBlock title="Extraits sources" items={comparison.sourceExcerpts.map((item) => `${item.observationId} : ${item.excerpt}`)} />
                 <div className="mt-4 flex flex-wrap gap-2">
@@ -1198,7 +1206,13 @@ function StudyLongitudinalComparisons({ study, updateStudy }: { study: Study; up
                     </>
                   ) : (
                     <>
-                      <button type="button" className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft disabled:opacity-50" disabled={disabled} onClick={() => validateComparison(comparison.id)}>
+                      <button
+                        type="button"
+                        className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft disabled:opacity-50"
+                        disabled={disabled || !canValidateTransition}
+                        title={canValidateTransition ? "Valider cette transition candidate" : (comparison.noTransitionReason ?? "Donnees insuffisantes")}
+                        onClick={() => validateComparison(comparison.id)}
+                      >
                         {disabled ? "Traitement..." : "Valider comme transition"}
                       </button>
                       <button type="button" className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200 disabled:opacity-50" disabled={disabled} onClick={() => openEdit(comparison)}>
@@ -1223,6 +1237,85 @@ function StudyLongitudinalComparisons({ study, updateStudy }: { study: Study; up
         <SmartEmpty text={comparisons.length ? "Aucune proposition dans ce filtre." : "Aucune comparaison suffisante pour le moment. Une comparaison sera produite apres chaque nouvelle observation."} />
       )}
     </Panel>
+  );
+}
+
+function CategorizedLongitudinalSections({
+  comparisons
+}: {
+  comparisons: LongitudinalComparisonView[];
+}) {
+  const emotional = comparisons.filter((comparison) => comparison.resultStatus === "emotional_perturbation" || (comparison.emotionalPerturbations ?? []).length);
+  const reformulations = comparisons.filter((comparison) =>
+    comparison.resultStatus === "possible_reformulation"
+    || comparison.resultStatus === "observable_understanding_change"
+    || (comparison.observerInterpretations ?? []).length
+    || (comparison.directPersonFormulations ?? []).length
+  );
+  const transitions = comparisons.filter((comparison) => comparison.resultStatus === "transition_candidate");
+  return (
+    <div className="mb-4 grid gap-3">
+      <LongitudinalSectionSummary
+        title="Perturbations et evolutions emotionnelles"
+        empty="Aucune trajectoire emotionnelle explicite dans ce filtre. Si les observations decrivent seulement une perturbation sans formulation directe, elle apparaitra ici avec un Delta non calculable."
+        comparisons={emotional}
+        describe={(comparison) => comparison.emotionalPerturbations?.join(" ; ") || comparison.conclusion}
+      />
+      <LongitudinalSectionSummary
+        title="Changements de formulation possibles"
+        empty="Aucune reformulation possible dans ce filtre. Une interpretation du narrateur sera conservee comme hypothese, sans devenir automatiquement une transition."
+        comparisons={reformulations}
+        describe={(comparison) =>
+          [
+            ...(comparison.directPersonFormulations ?? []),
+            ...(comparison.observerInterpretations ?? [])
+          ].join(" ; ") || comparison.conclusion
+        }
+      />
+      <LongitudinalSectionSummary
+        title="Transitions de comprehension validables"
+        empty="Aucune transition validable dans ce filtre. Il faut deux formulations de comprehension, ou une transformation observable documentee, avant validation utilisateur et calcul du Delta."
+        comparisons={transitions}
+        describe={(comparison) => comparison.potentialTransition ?? comparison.conclusion}
+      />
+    </div>
+  );
+}
+
+type LongitudinalComparisonView = ReturnType<typeof normalizeComparison>;
+
+function LongitudinalSectionSummary({
+  title,
+  empty,
+  comparisons,
+  describe
+}: {
+  title: string;
+  empty: string;
+  comparisons: LongitudinalComparisonView[];
+  describe: (comparison: LongitudinalComparisonView) => string;
+}) {
+  return (
+    <section className="rounded-md border border-white/10 bg-black/10 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold text-white">{title}</h3>
+        <Badge>{comparisons.length}</Badge>
+      </div>
+      {comparisons.length ? (
+        <div className="mt-3 grid gap-2">
+          {comparisons.map((comparison) => (
+            <div key={`${title}-${comparison.id}`} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <p className="text-sm leading-6 text-stone-200">{describe(comparison)}</p>
+              <p className="mt-1 text-xs text-stone-500">
+                Observations : {comparison.sourceObservationIds.join(", ")} · {comparison.methodologicalStatus}
+              </p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="mt-2 text-sm leading-6 text-stone-400">{empty}</p>
+      )}
+    </section>
   );
 }
 
@@ -1671,7 +1764,7 @@ function Studies(props: {
           }
         : observation;
     });
-    props.updateStudy({
+    const emotionReanalyzedStudy: Study = {
       ...selected,
       observations: updatedObservations,
       structuredHistory: [
@@ -1686,7 +1779,9 @@ function Studies(props: {
           summary: "Reanalyse emotionnelle des observations existantes ; nouvelles propositions conservees sans validation automatique."
         }
       ]
-    });
+    };
+    const result = reanalyzeLongitudinalComparisons(emotionReanalyzedStudy, now);
+    props.updateStudy(result.study);
   }
 
   function updateObservationEmotionStatus(

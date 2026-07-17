@@ -88,6 +88,45 @@ describe("LongitudinalObservationEngine", () => {
     expect(result.conclusion).toBe("Aucune comparaison suffisante avec une observation anterieure de cette etude.");
   });
 
+  it("keeps the anonymized Amandine emotional trajectory visible without creating a transition", () => {
+    const study = makeStudy();
+    const first = makeRecord("obs-1", "Apres une discussion, la personne a declare etre perdue.", "2026-07-15T10:00:00.000Z");
+    const second = makeRecord("obs-2", "Quelques jours plus tard, l'observateur estime qu'elle semble encore plus perdue.", "2026-07-16T10:00:00.000Z");
+    const third = makeRecord("obs-3", "L'observateur pense qu'une transformation interieure commence.", "2026-07-17T10:00:00.000Z");
+
+    const emotional = LongitudinalObservationEngine.compare(study, [first, second], second, "2026-07-16T11:00:00.000Z");
+    const interpreted = LongitudinalObservationEngine.compare(study, [first, second, third], third, "2026-07-17T11:00:00.000Z");
+
+    expect(emotional.resultStatus).toBe("emotional_perturbation");
+    expect(emotional.emotionalPerturbations?.join(" ")).toContain("perdue");
+    expect(emotional.proposedPreviousState).toBeNull();
+    expect(emotional.proposedCurrentState).toBeNull();
+    expect(emotional.noTransitionReason).toContain("Donnees insuffisantes");
+    expect(interpreted.resultStatus).toBe("possible_reformulation");
+    expect(interpreted.observerInterpretations?.join(" ")).toContain("transformation interieure commence");
+    expect(interpreted.proposedPreviousState).toBeNull();
+    expect(interpreted.proposedCurrentState).toBeNull();
+  });
+
+  it("proposes two states when the person directly reformulates before and now", () => {
+    const study = makeStudy();
+    const previous = makeRecord("obs-3", "L'observateur pense qu'une transformation interieure commence.", "2026-07-17T10:00:00.000Z");
+    const current = makeRecord(
+      "obs-4",
+      "La personne declare : Jusqu'ici, je pensais que ma mission etait de transmettre des enseignements. Je comprends maintenant qu'elle consiste surtout a temoigner pour aider chacun a reconnaitre la Verite.",
+      "2026-07-18T10:00:00.000Z"
+    );
+
+    const result = LongitudinalObservationEngine.compare(study, [previous, current], current, "2026-07-18T11:00:00.000Z");
+
+    expect(result.resultStatus).toBe("transition_candidate");
+    expect(result.proposedPreviousState?.summary).toBe("ma mission etait de transmettre des enseignements");
+    expect(result.proposedCurrentState?.summary).toBe("elle consiste surtout a temoigner pour aider chacun a reconnaitre la Verite");
+    expect(result.directPersonFormulations?.[0]).toContain("Je comprends maintenant");
+    expect(result.potentialTransition).toContain("Transition de comprehension candidate");
+    expect(result.noTransitionReason).toContain("l'utilisateur doit confirmer");
+  });
+
   it("does not mutate input records or study", () => {
     const study = makeStudy();
     const previous = makeRecord("obs-1", previousText, "2026-07-15T10:00:00.000Z");

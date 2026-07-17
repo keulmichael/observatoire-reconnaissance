@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { migrateObservatoryData } from "./data-migration";
 import {
   editLongitudinalComparison,
+  reanalyzeLongitudinalComparisons,
   rejectLongitudinalComparison,
   validateLongitudinalComparison
 } from "./longitudinal-review";
@@ -39,6 +40,20 @@ describe("longitudinal review actions", () => {
     const study = makeStudy({
       proposedPreviousState: null,
       previousStateProposal: null
+    });
+
+    expect(() => validateLongitudinalComparison(study, "comparison-1", now)).toThrow("Donnees insuffisantes");
+    expect(study.transitions).toHaveLength(0);
+    expect(study.deltaScores).toHaveLength(0);
+  });
+
+  it("refuses to validate an emotional perturbation as a comprehension transition", () => {
+    const study = makeStudy({
+      resultStatus: "emotional_perturbation",
+      potentialTransition: null,
+      proposedPreviousState: null,
+      proposedCurrentState: null,
+      noTransitionReason: "Donnees insuffisantes pour etablir un changement de comprehension."
     });
 
     expect(() => validateLongitudinalComparison(study, "comparison-1", now)).toThrow("Donnees insuffisantes");
@@ -105,6 +120,25 @@ describe("longitudinal review actions", () => {
     expect(comparison.detectedDifferences).toHaveLength(1);
     expect(comparison.createdAt).toBeTruthy();
     expect(comparison.updatedAt).toBeTruthy();
+    expect(comparison.resultStatus).toBe("transition_candidate");
+    expect(comparison.noTransitionReason).toBeTruthy();
+  });
+
+  it("reanalyzes the full study from existing records without overwriting reviewed comparisons", () => {
+    const validated = makeStudy({ status: "validated", generatedTransitionId: "transition-old" });
+    const withThirdObservation: Study = {
+      ...validated,
+      observations: [
+        ...validated.observations!,
+        observation("obs-3", "Quelques jours plus tard, l'observateur estime qu'elle semble encore plus perdue.", "2026-07-17T10:00:00.000Z")
+      ]
+    };
+
+    const result = reanalyzeLongitudinalComparisons(withThirdObservation, now);
+
+    expect(result.study.longitudinalComparisons?.some((comparison) => comparison.id === "comparison-1" && comparison.status === "validated")).toBe(true);
+    expect(result.study.longitudinalComparisons?.length).toBeGreaterThan(1);
+    expect(result.study.observations?.find((item) => item.id === "obs-3")?.generatedLongitudinalComparisonIds?.length).toBeGreaterThan(0);
   });
 
   it("is deterministic and does not mutate inputs", () => {

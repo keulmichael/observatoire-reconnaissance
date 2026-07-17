@@ -61,6 +61,39 @@ test("reviews longitudinal changes through edit, validate, and reject actions", 
   expect(consoleErrors).toEqual([]);
 });
 
+test("shows incomplete Amandine longitudinal result in changes tab", async ({ page }) => {
+  const consoleErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") consoleErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => consoleErrors.push(error.message));
+
+  await page.addInitScript(({ key, value }) => {
+    window.localStorage.setItem(key, JSON.stringify(value));
+  }, { key: storageKey, value: makeAmandineData() });
+  await page.goto("/");
+  await page.getByRole("navigation").getByRole("button", { name: /tudes/ }).click();
+  await page.getByRole("button", { name: "Changements" }).click();
+
+  await expect(page.getByText("Perturbations et evolutions emotionnelles")).toBeVisible();
+  await expect(page.getByText("Changements de formulation possibles")).toBeVisible();
+  await expect(page.getByText("Transitions de comprehension validables")).toBeVisible();
+  await expect(page.getByText(/Donnees insuffisantes pour etablir un changement de comprehension/)).toBeVisible();
+  await expect(page.getByRole("button", { name: "Valider comme transition" }).first()).toBeDisabled();
+
+  const stored = await page.evaluate((key) => {
+    const study = JSON.parse(localStorage.getItem(key) ?? "{}").studies[0];
+    return {
+      comparisons: study.longitudinalComparisons.length,
+      status: study.longitudinalComparisons[0].resultStatus,
+      transitions: study.transitions.length,
+      deltaScores: study.deltaScores.length
+    };
+  }, storageKey);
+  expect(stored).toEqual({ comparisons: 1, status: "emotional_perturbation", transitions: 0, deltaScores: 0 });
+  expect(consoleErrors).toEqual([]);
+});
+
 function makeData() {
   return {
     version: 1,
@@ -97,6 +130,83 @@ function makeData() {
       updatedAt: now
     }]
   };
+}
+
+function makeAmandineData() {
+  return {
+    version: 1,
+    schemaVersion: 3,
+    studies: [{
+      id: "study-amandine",
+      title: "Etude anonymisee A.",
+      description: "Cas fictif anonymise",
+      subject: "Amandine",
+      startDate: "2026-07-15",
+      status: "Observation ouverte",
+      currentLevel: "Observation ouverte",
+      notes: "",
+      states: [],
+      manifestations: [],
+      transitions: [],
+      recognitions: [],
+      catalysts: [],
+      emotionObservations: [],
+      relations: [],
+      timeline: [],
+      map: { nodes: [], edges: [] },
+      history: [],
+      observations: [
+        amandineObservation("obs-a1", "Apres une discussion, la personne a declare etre perdue.", "2026-07-15T10:00:00.000Z"),
+        amandineObservation("obs-a2", "Quelques jours plus tard, l'observateur estime qu'elle semble encore plus perdue.", "2026-07-16T10:00:00.000Z"),
+        amandineObservation("obs-a3", "L'observateur pense qu'une transformation interieure commence.", "2026-07-17T10:00:00.000Z")
+      ],
+      openQuestions: [],
+      structuredHistory: [],
+      relationProposals: [],
+      deltaScores: [],
+      longitudinalComparisons: [{
+        id: "comparison-amandine-1",
+        studyId: "study-amandine",
+        sourceObservationIds: ["obs-a1", "obs-a2"],
+        previousObservationId: "obs-a1",
+        currentObservationId: "obs-a2",
+        title: "Perturbation emotionnelle suivie",
+        comparableObservations: [],
+        dimensionsCompared: [{ key: "emotion", label: "Emotion exprimee", previous: ["perdue"], current: ["encore plus perdue"] }],
+        differences: [{ dimension: "emotion", label: "Emotion exprimee", previous: ["perdue"], current: ["encore plus perdue"], summary: "Evolution emotionnelle attribuee." }],
+        proposedPreviousState: null,
+        proposedCurrentState: null,
+        potentialTransition: null,
+        missingData: ["Formulation directe de comprehension manquante."],
+        methodologicalLimits: ["Interpretation du narrateur a distinguer d'une formulation directe."],
+        confirmationQuestions: ["La personne formule-t-elle elle-meme une comprehension nouvelle ?"],
+        sourceExcerpts: [
+          { observationId: "obs-a1", excerpt: "Apres une discussion, la personne a declare etre perdue." },
+          { observationId: "obs-a2", excerpt: "Quelques jours plus tard, l'observateur estime qu'elle semble encore plus perdue." }
+        ],
+        resultStatus: "emotional_perturbation",
+        emotionalPerturbations: ["perdue", "encore plus perdue"],
+        observerInterpretations: ["l'observateur estime qu'elle semble encore plus perdue"],
+        directPersonFormulations: [],
+        observableTransformations: [],
+        noTransitionReason: "Donnees insuffisantes pour etablir un changement de comprehension : l'evolution observee est emotionnelle, sans formulation directe d'une nouvelle comprehension.",
+        followUpQuestions: ["La personne formule-t-elle elle-meme une comprehension nouvelle ?"],
+        methodologicalStatus: "Perturbation emotionnelle suivie",
+        comparedAt: now,
+        engine: "LongitudinalObservationEngine",
+        engineVersion: "LongitudinalObservationEngine:v1",
+        status: "proposed",
+        confidence: "faible",
+        conclusion: "Plusieurs observations ont ete comparees. Une perturbation emotionnelle est decrite, mais aucun changement explicite de comprehension n'a encore ete formule par la personne concernee."
+      }],
+      createdAt: now,
+      updatedAt: now
+    }]
+  };
+}
+
+function amandineObservation(id: string, rawText: string, createdAt: string) {
+  return { ...observation(id, rawText, createdAt), studyId: "study-amandine" };
 }
 
 function observation(id: string, rawText: string, createdAt: string) {

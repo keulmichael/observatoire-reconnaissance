@@ -1,9 +1,9 @@
 import { historyEntry, persistentDeltaFromScore, recordFromDraft } from "../data-migration";
 import { DeltaEngine } from "../engines/DeltaEngine";
-import { LongitudinalObservationEngine } from "../engines/LongitudinalObservationEngine";
 import { RelationEngine } from "../engines/RelationEngine";
 import { StateDifferenceEngine } from "../engines/StateDifferenceEngine";
 import { TrajectoryEngine } from "../engines/TrajectoryEngine";
+import { reanalyzeLongitudinalComparisons } from "../longitudinal-review";
 import type {
   Catalyst,
   EmotionObservation,
@@ -475,21 +475,14 @@ function enrichStudyWithObservation(baseStudy: Study, draft: ObservationAnalysis
     deltaIds: (resultStudy.deltaScores ?? []).filter((item) => item.sourceObservationIds.includes(draft.id)).map((item) => item.id)
   };
   const preliminaryRecord = recordFromDraft(draft, resultStudy.id, generated, now);
-  const longitudinalComparison = LongitudinalObservationEngine.compare(
-    resultStudy,
-    [...(baseStudy.observations ?? []), preliminaryRecord],
-    preliminaryRecord,
-    now
-  );
   const record = {
     ...preliminaryRecord,
-    generatedLongitudinalComparisonIds: [longitudinalComparison.id],
-    engineResultsSummary: [...preliminaryRecord.engineResultsSummary, longitudinalComparison.conclusion]
+    engineResultsSummary: [...preliminaryRecord.engineResultsSummary, "Comparaison longitudinale en attente de recalcul global."]
   };
   const questions = record.openQuestions;
-  return {
+  const studyWithRecord: Study = {
     ...resultStudy,
-    longitudinalComparisons: [...(baseStudy.longitudinalComparisons ?? []), longitudinalComparison],
+    longitudinalComparisons: baseStudy.longitudinalComparisons ?? [],
     observations: [...(baseStudy.observations ?? []), record],
     openQuestions: [...(baseStudy.openQuestions ?? []), ...questions],
     structuredHistory: [
@@ -498,17 +491,11 @@ function enrichStudyWithObservation(baseStudy: Study, draft: ObservationAnalysis
       ...generated.stateIds.map((id) => historyEntry(now, "etat genere", "UnderstandingState", id, "Etat genere depuis une observation.", [record.id])),
       ...generated.transitionIds.map((id) => historyEntry(now, "transition generee", "Transition", id, "Transition generee depuis une observation.", [record.id])),
       ...generated.deltaIds.map((id) => historyEntry(now, "delta calcule", "PersistentDeltaScore", id, "Delta calcule et persiste.", [record.id])),
-      historyEntry(
-        now,
-        "comparaison longitudinale",
-        "LongitudinalObservationComparison",
-        longitudinalComparison.id,
-        longitudinalComparison.potentialTransition ?? longitudinalComparison.conclusion,
-        longitudinalComparison.sourceObservationIds
-      )
+      historyEntry(now, "comparaison longitudinale", "Study", resultStudy.id, "Comparaison longitudinale globale demandee apres nouvelle observation.", [record.id])
     ],
     history: [...resultStudy.history, `Observation ${record.id} enregistree`]
   };
+  return reanalyzeLongitudinalComparisons(studyWithRecord, now).study;
 }
 
 function buildMap(artifacts: Pick<ScientificArtifacts, "manifestations" | "emotions" | "catalysts" | "relations">) {

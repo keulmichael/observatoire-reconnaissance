@@ -744,6 +744,13 @@ export type EmotionPolarity = "present" | "absent" | "negated" | "uncertain";
 export type EmotionScope = "individual" | "group" | "collective" | "indeterminate";
 export type LongitudinalComparisonStatus = "proposed" | "edited" | "validated" | "rejected" | "propose" | "valide" | "modifie" | "rejete";
 export type LongitudinalConfidence = "faible" | "moyen" | "eleve";
+export type LongitudinalResultStatus =
+  | "no_comparable_data"
+  | "emotional_perturbation"
+  | "possible_reformulation"
+  | "observable_understanding_change"
+  | "transition_candidate"
+  | "insufficient_data";
 
 export type LongitudinalDimensionKey =
   | "sujet"
@@ -812,6 +819,15 @@ export interface LongitudinalObservationComparison {
   confirmationQuestions: string[];
   questions?: string[];
   sourceExcerpts: Array<{ observationId: string; excerpt: string }>;
+  resultStatus?: LongitudinalResultStatus;
+  commonDimensions?: string[];
+  emotionalPerturbations?: string[];
+  observerInterpretations?: string[];
+  directPersonFormulations?: string[];
+  observableTransformations?: string[];
+  noTransitionReason?: string;
+  followUpQuestions?: string[];
+  methodologicalStatus?: string;
   comparedAt: string;
   engine: "LongitudinalObservationEngine";
   engineVersion: string;

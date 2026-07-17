@@ -49,11 +49,40 @@ function normalizeLongitudinalComparison(
     detectedDifferences: comparison.detectedDifferences ?? comparison.differences,
     limitations: comparison.limitations ?? comparison.methodologicalLimits,
     questions: comparison.questions ?? comparison.confirmationQuestions,
+    resultStatus: comparison.resultStatus ?? inferLongitudinalResultStatus(comparison),
+    commonDimensions: comparison.commonDimensions ?? comparison.dimensionsCompared
+      .filter((dimension) => dimension.previous.length && dimension.current.length)
+      .map((dimension) => dimension.label),
+    emotionalPerturbations: comparison.emotionalPerturbations ?? comparison.dimensionsCompared
+      .filter((dimension) => dimension.key === "emotion")
+      .flatMap((dimension) => [...dimension.previous, ...dimension.current]),
+    observerInterpretations: comparison.observerInterpretations ?? [],
+    directPersonFormulations: comparison.directPersonFormulations ?? [],
+    observableTransformations: comparison.observableTransformations ?? [],
+    noTransitionReason: comparison.noTransitionReason ?? (
+      comparison.generatedTransitionId
+        ? "Transition deja validee."
+        : "Donnees insuffisantes pour creer une transition complete et calculer un Delta de comprehension."
+    ),
+    followUpQuestions: comparison.followUpQuestions ?? comparison.questions ?? comparison.confirmationQuestions,
+    methodologicalStatus: comparison.methodologicalStatus ?? "Statut methodologique migre",
     engineProvenance: comparison.engineProvenance ?? [comparison.engineVersion],
     createdAt,
     updatedAt: comparison.updatedAt ?? createdAt,
     status: normalizeLongitudinalStatus(comparison.status)
   };
+}
+
+function inferLongitudinalResultStatus(
+  comparison: LongitudinalObservationComparison
+): NonNullable<LongitudinalObservationComparison["resultStatus"]> {
+  if (!comparison.previousObservationId) return "no_comparable_data";
+  if (comparison.generatedTransitionId) return "transition_candidate";
+  if (comparison.potentialTransition && comparison.proposedPreviousState && comparison.proposedCurrentState) return "transition_candidate";
+  if (comparison.dimensionsCompared.some((dimension) => dimension.key === "emotion" && (dimension.previous.length || dimension.current.length))) {
+    return "emotional_perturbation";
+  }
+  return comparison.differences.length ? "insufficient_data" : "insufficient_data";
 }
 
 function normalizeLongitudinalStatus(status: LongitudinalObservationComparison["status"]): LongitudinalObservationComparison["status"] {

@@ -1,5 +1,6 @@
 import { historyEntry, persistentDeltaFromScore } from "./data-migration";
 import { DeltaEngine } from "./engines/DeltaEngine";
+import { LongitudinalObservationEngine } from "./engines/LongitudinalObservationEngine";
 import { StateDifferenceEngine } from "./engines/StateDifferenceEngine";
 import { stableId } from "./parser/ObservationParser";
 import type {
@@ -56,6 +57,10 @@ export function validateLongitudinalComparison(
   }
   if (!comparison.previousObservationId || !comparison.currentObservationId) {
     throw new Error("Validation impossible : deux observations sources sont necessaires.");
+  }
+  const resultStatus = normalizeComparison(comparison).resultStatus;
+  if (resultStatus !== "transition_candidate" && resultStatus !== "observable_understanding_change") {
+    throw new Error(comparison.noTransitionReason ?? "Validation impossible : donnees insuffisantes pour etablir une transition de comprehension.");
   }
 
   const previousObservation = study.observations?.find((observation) => observation.id === comparison.previousObservationId);
@@ -169,6 +174,83 @@ export function validateLongitudinalComparison(
   };
 }
 
+export function reanalyzeLongitudinalComparisons(
+  study: Study,
+  now = new Date().toISOString()
+): { study: Study; message: string } {
+  const records = (study.observations ?? [])
+    .filter((record) => record.status === "active")
+    .slice()
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  const recalculated = records.map((record, index) =>
+    LongitudinalObservationEngine.compare(study, records.slice(0, index + 1), record, `${now}-${index}`)
+  );
+  const existing = (study.longitudinalComparisons ?? []).map(normalizeComparison);
+  const preserved = existing.filter((comparison) => normalizeStatus(comparison.status) !== "proposed");
+  const proposedByPair = new Map(
+    existing
+      .filter((comparison) => normalizeStatus(comparison.status) === "proposed")
+      .map((comparison) => [comparisonPairKey(comparison), comparison])
+  );
+  const preservedPairKeys = new Set(preserved.map(comparisonPairKey));
+  const nextComparisons = [
+    ...preserved,
+    ...recalculated
+      .filter((comparison) => !preservedPairKeys.has(comparisonPairKey(comparison)))
+      .map((comparison) => {
+        const previous = proposedByPair.get(comparisonPairKey(comparison));
+        return previous
+          ? normalizeComparison({
+              ...comparison,
+              id: previous.id,
+              createdAt: previous.createdAt,
+              status: previous.status,
+              comparedAt: comparison.comparedAt,
+              updatedAt: now
+            })
+          : normalizeComparison(comparison);
+      })
+  ];
+  const nextComparisonIdsByObservation = new Map<string, string[]>();
+  nextComparisons.forEach((comparison) => {
+    comparison.sourceObservationIds.forEach((observationId) => {
+      nextComparisonIdsByObservation.set(observationId, [
+        ...(nextComparisonIdsByObservation.get(observationId) ?? []),
+        comparison.id
+      ]);
+    });
+  });
+
+  const nextStudy: Study = {
+    ...study,
+    longitudinalComparisons: nextComparisons,
+    observations: (study.observations ?? []).map((observation) => ({
+      ...observation,
+      generatedLongitudinalComparisonIds: [...new Set(nextComparisonIdsByObservation.get(observation.id) ?? observation.generatedLongitudinalComparisonIds ?? [])],
+      engineResultsSummary: [
+        ...observation.engineResultsSummary.filter((summary) => !/comparaison longitudinale|Plusieurs observations ont ete comparees|Aucune comparaison suffisante/i.test(summary)),
+        ...(nextComparisonIdsByObservation.has(observation.id) ? ["Comparaison longitudinale recalculee."] : [])
+      ]
+    })),
+    structuredHistory: [
+      ...(study.structuredHistory ?? []),
+      historyEntry(
+        now,
+        "comparaison longitudinale",
+        "Study",
+        study.id,
+        "Reanalyse longitudinale complete de l'etude ; validations et rejets historiques conserves.",
+        records.map((record) => record.id)
+      )
+    ],
+    updatedAt: now
+  };
+  return {
+    study: nextStudy,
+    message: `${recalculated.length} comparaison(s) longitudinale(s) recalculee(s). Validations, rejets et modifications historiques conserves.`
+  };
+}
+
 export function editLongitudinalComparison(
   study: Study,
   comparisonId: string,
@@ -244,6 +326,7 @@ export function rejectLongitudinalComparison(
 export function normalizeComparison(comparison: LongitudinalObservationComparison): LongitudinalObservationComparison {
   const status = normalizeStatus(comparison.status);
   const createdAt = comparison.createdAt ?? comparison.comparedAt;
+  const questions = comparison.questions ?? comparison.confirmationQuestions;
   return {
     ...comparison,
     title: comparison.title ?? comparison.potentialTransition ?? "Comparaison longitudinale",
@@ -251,7 +334,20 @@ export function normalizeComparison(comparison: LongitudinalObservationCompariso
     currentStateProposal: comparison.currentStateProposal ?? comparison.proposedCurrentState,
     detectedDifferences: comparison.detectedDifferences ?? comparison.differences,
     limitations: comparison.limitations ?? comparison.methodologicalLimits,
-    questions: comparison.questions ?? comparison.confirmationQuestions,
+    questions,
+    resultStatus: comparison.resultStatus ?? inferResultStatus(comparison),
+    commonDimensions: comparison.commonDimensions ?? comparison.dimensionsCompared
+      .filter((dimension) => dimension.previous.length && dimension.current.length)
+      .map((dimension) => dimension.label),
+    emotionalPerturbations: comparison.emotionalPerturbations ?? comparison.dimensionsCompared
+      .filter((dimension) => dimension.key === "emotion")
+      .flatMap((dimension) => [...dimension.previous, ...dimension.current]),
+    observerInterpretations: comparison.observerInterpretations ?? [],
+    directPersonFormulations: comparison.directPersonFormulations ?? [],
+    observableTransformations: comparison.observableTransformations ?? [],
+    noTransitionReason: comparison.noTransitionReason ?? "Donnees insuffisantes pour creer une transition complete et calculer un Delta de comprehension.",
+    followUpQuestions: comparison.followUpQuestions ?? questions,
+    methodologicalStatus: comparison.methodologicalStatus ?? "Statut methodologique a verifier",
     engineProvenance: comparison.engineProvenance ?? [comparison.engineVersion],
     createdAt,
     updatedAt: comparison.updatedAt ?? createdAt,
@@ -274,6 +370,19 @@ function findComparison(study: Study, comparisonId: string) {
 
 function isValidated(comparison: LongitudinalObservationComparison) {
   return normalizeStatus(comparison.status) === "validated";
+}
+
+function comparisonPairKey(comparison: LongitudinalObservationComparison) {
+  return `${comparison.previousObservationId ?? "none"}->${comparison.currentObservationId}`;
+}
+
+function inferResultStatus(comparison: LongitudinalObservationComparison) {
+  if (!comparison.previousObservationId) return "no_comparable_data" as const;
+  if (comparison.generatedTransitionId || comparison.potentialTransition) return "transition_candidate" as const;
+  if (comparison.dimensionsCompared.some((dimension) => dimension.key === "emotion" && (dimension.previous.length || dimension.current.length))) {
+    return "emotional_perturbation" as const;
+  }
+  return "insufficient_data" as const;
 }
 
 function updateComparison(study: Study, updated: LongitudinalObservationComparison) {
