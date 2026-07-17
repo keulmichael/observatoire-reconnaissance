@@ -14,6 +14,7 @@ import type {
 } from "../types";
 import { stableId } from "../parser/ObservationParser";
 import { detectFrenchEmotionExpressions, normalizeFrench } from "../parser/french-emotion-patterns";
+import { classifyComparisonLabel } from "../scientific-model";
 
 export const LONGITUDINAL_OBSERVATION_ENGINE_VERSION = "LongitudinalObservationEngine:v1";
 
@@ -194,7 +195,13 @@ function buildDifferences(dimensions: LongitudinalDimensionSnapshot[]): Longitud
       label: dimension.label,
       previous: dimension.previous,
       current: dimension.current,
-      summary: differenceSummary(dimension)
+      summary: evolutionLabelFrom({
+        dimension: dimension.key,
+        label: dimension.label,
+        previous: dimension.previous,
+        current: dimension.current,
+        summary: differenceSummary(dimension)
+      })
     }));
 }
 
@@ -236,7 +243,7 @@ function potentialTransitionFrom(
   if (resultStatus === "transition_candidate" && hasDirectReformulation) return "Transition de comprehension candidate : reformulation directe avant/apres a valider.";
   const changed = new Set(differences.map((difference) => difference.dimension));
   const reactionChange = changed.has("emotion") || changed.has("mobilisation") || changed.has("comportement");
-  if (reactionChange) return "Changement potentiel detecte dans les reactions collectives decrites.";
+  if (reactionChange) return "Evolution emotionnelle ou comportementale detectee, sans transition de comprehension.";
   if (differences.length) return "Variation potentielle detectee entre observations.";
   return null;
 }
@@ -343,7 +350,7 @@ function resultStatusFrom(
   const currentHasEmotionalPerturbation = emotionalPerturbationsFrom([currentAsRecord]).length > 0;
   if (currentHasObserverInterpretation && !currentHasEmotionalPerturbation) return "possible_reformulation";
   if (differences.some((difference) => ["mobilisation", "comportement", "decision"].includes(difference.dimension))) {
-    return "transition_candidate";
+    return "insufficient_data";
   }
   if (emotionalPerturbationsFrom([previous, currentAsRecord]).length) return "emotional_perturbation";
   if (observerInterpretationsFrom([previous, currentAsRecord]).length) return "possible_reformulation";
@@ -416,6 +423,15 @@ function methodologicalStatusFrom(resultStatus: LongitudinalResultStatus) {
   if (resultStatus === "observable_understanding_change") return "Transformation observable a confirmer";
   if (resultStatus === "no_comparable_data") return "Comparaison longitudinale impossible";
   return "Indicateurs insuffisants";
+}
+
+function evolutionLabelFrom(difference: LongitudinalDifference) {
+  const category = classifyComparisonLabel(difference.label);
+  if (category === "emotion") return `Evolution émotionnelle : ${difference.summary}`;
+  if (category === "behaviour" || category === "decision") return `Evolution comportementale : ${difference.summary}`;
+  if (category === "concept") return `Evolution conceptuelle : ${difference.summary}`;
+  if (category === "metadata") return `Métadonnée comparée : ${difference.summary}`;
+  return difference.summary;
 }
 
 function confidenceFrom(score: number, differenceCount: number, limitCount: number): LongitudinalConfidence {

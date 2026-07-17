@@ -48,6 +48,7 @@ import { StateDifferenceEngine } from "@/lib/engines/StateDifferenceEngine";
 import { TrajectoryEngine } from "@/lib/engines/TrajectoryEngine";
 import { parseObservation } from "@/lib/parser/ObservationParser";
 import { analyzeWithObservationAI, defaultAISettings } from "@/lib/ai/ObservationAI";
+import { emotionOriginLabel, inferStateType } from "@/lib/scientific-model";
 import {
   editLongitudinalComparison,
   normalizeComparison,
@@ -138,9 +139,13 @@ export default function ObservatoryApp() {
   const [aiConnectionTesting, setAIConnectionTesting] = useState(false);
   const [lastAnalysisNotice, setLastAnalysisNotice] = useState("Analyse locale uniquement");
   const effectiveAISettings = aiSettings ?? defaultAISettings;
+  const selectedStudyData = useMemo(
+    () => ({ ...data, studies: selectedStudy ? [selectedStudy] : [] }),
+    [data, selectedStudy]
+  );
   const dashboard = useMemo(() => buildDashboard(data), [data]);
   const analysis = useMemo(() => buildAnalysis(data), [data]);
-  const reflexivityDashboard = useMemo(() => ReflexivityDashboardEngine.build(data), [data]);
+  const reflexivityDashboard = useMemo(() => ReflexivityDashboardEngine.build(selectedStudyData), [selectedStudyData]);
   const timeline = useMemo(() => buildTimeline(selectedStudy), [selectedStudy]);
 
   const studies = data.studies.filter((study) =>
@@ -326,7 +331,12 @@ export default function ObservatoryApp() {
             />
           )}
           {view === "followup" && <ObservationFollowup drafts={observationDrafts} study={selectedStudy} />}
-          {view === "dashboard" && <Dashboard dashboard={dashboard} studies={studies} selectStudy={selectStudy} setView={setView} />}
+          {view === "dashboard" && (
+            <>
+              <AnalysisScope scope="all" />
+              <Dashboard dashboard={dashboard} studies={studies} selectStudy={selectStudy} setView={setView} />
+            </>
+          )}
           {view === "studies" && (
             <Studies
               studies={studies}
@@ -339,17 +349,27 @@ export default function ObservatoryApp() {
               studyNotice={studyNotice}
             />
           )}
-          {view === "states" && <States study={selectedStudy} />}
-          {view === "transitions" && <Transitions study={selectedStudy} />}
-          {view === "state-comparison" && <StateComparison study={selectedStudy} />}
-          {view === "understanding-evolution" && <UnderstandingEvolution study={selectedStudy} />}
-          {view === "reflexivity-engine" && <ReflexivityEngineDashboard dashboard={reflexivityDashboard} />}
+          {view === "states" && <ScopedStudyView study={selectedStudy}><States study={selectedStudy} /></ScopedStudyView>}
+          {view === "transitions" && <ScopedStudyView study={selectedStudy}><Transitions study={selectedStudy} /></ScopedStudyView>}
+          {view === "state-comparison" && <ScopedStudyView study={selectedStudy}><StateComparison study={selectedStudy} /></ScopedStudyView>}
+          {view === "understanding-evolution" && <ScopedStudyView study={selectedStudy}><UnderstandingEvolution study={selectedStudy} /></ScopedStudyView>}
+          {view === "reflexivity-engine" && (
+            <>
+              <AnalysisScope scope="selected" study={selectedStudy} />
+              <ReflexivityEngineDashboard dashboard={reflexivityDashboard} />
+            </>
+          )}
           {view === "map" && selectedStudy && <ReflexiveMap study={selectedStudy} onChange={updateMap} />}
-          {view === "emotions" && <Emotions study={selectedStudy} />}
-          {view === "catalysts" && <Catalysts study={selectedStudy} />}
-          {view === "recognitions" && <Recognitions study={selectedStudy} />}
+          {view === "emotions" && <ScopedStudyView study={selectedStudy}><Emotions study={selectedStudy} /></ScopedStudyView>}
+          {view === "catalysts" && <ScopedStudyView study={selectedStudy}><Catalysts study={selectedStudy} /></ScopedStudyView>}
+          {view === "recognitions" && <ScopedStudyView study={selectedStudy}><Recognitions study={selectedStudy} /></ScopedStudyView>}
           {view === "timeline" && <Timeline events={timeline} />}
-          {view === "analysis" && <Analysis analysis={analysis} />}
+          {view === "analysis" && (
+            <>
+              <AnalysisScope scope="all" />
+              <Analysis analysis={analysis} />
+            </>
+          )}
         </section>
 
         <aside className="glass h-fit rounded-lg p-4 lg:sticky lg:top-4">
@@ -450,6 +470,31 @@ function Journal({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function ScopedStudyView({ study, children }: { study?: Study; children: React.ReactNode }) {
+  return (
+    <div className="grid gap-4">
+      <AnalysisScope scope="selected" study={study} />
+      {children}
+    </div>
+  );
+}
+
+function AnalysisScope({ scope, study }: { scope: "selected" | "all"; study?: Study }) {
+  return (
+    <Panel title="Contexte d'analyse">
+      <div className="flex flex-wrap gap-3 text-sm text-stone-200">
+        <span className={scope === "selected" ? "text-goldSoft" : "text-stone-500"}>○ étude sélectionnée</span>
+        <span className={scope === "all" ? "text-goldSoft" : "text-stone-500"}>○ toutes les études</span>
+      </div>
+      <p className="mt-2 text-sm leading-6 text-stone-400">
+        {scope === "selected"
+          ? `Les résultats utilisent uniquement ${study ? `l'étude « ${study.title} »` : "l'étude sélectionnée"}.`
+          : "Les résultats agrègent explicitement toutes les études disponibles."}
+      </p>
+    </Panel>
   );
 }
 
@@ -1960,6 +2005,9 @@ function Studies(props: {
 
 function States({ study }: { study?: Study }) {
   if (!study) return <EmptyState />;
+  if (!study.states.length) {
+    return <MethodologyEmpty title="Aucun état construit" reason="Aucun état de compréhension, émotionnel ou comportemental n'est suffisamment documenté." needs={["une observation source", "une formulation explicite", "des éléments validés"]} />;
+  }
   const comparison = compareStates(study.states[0], study.states[study.states.length - 1]);
   return (
     <div className="grid gap-4">
@@ -1967,6 +2015,7 @@ function States({ study }: { study?: Study }) {
         {study.states.map((state) => (
           <Panel key={state.id} title={state.title}>
             <p className="text-sm text-stone-400">{state.date}</p>
+            <div className="mt-2"><Badge>{state.type ?? inferStateType(state)}</Badge></div>
             <p className="mt-3 leading-7 text-stone-100">{state.formulation}</p>
             <div className="mt-4 grid gap-3 sm:grid-cols-2">
               <StatCard label="Stabilité" value={`${state.stability}/10`} />
@@ -1996,16 +2045,19 @@ function StateComparison({ study }: { study?: Study }) {
   const sortedStates = useMemo(() => study?.states.slice().sort((a, b) => a.date.localeCompare(b.date)) ?? [], [study]);
   const [fromStateId, setFromStateId] = useState("");
   const [toStateId, setToStateId] = useState("");
-  if (!study || sortedStates.length < 2) return <EmptyState />;
+  if (!study) return <EmptyState />;
+  if (sortedStates.length < 2) {
+    return <MethodologyEmpty title="Comparaison impossible" reason="Deux états documentés dans la même étude sont nécessaires." needs={["un état précédent", "un état actuel", "une même compréhension comparable"]} />;
+  }
 
   const fromState = sortedStates.find((state) => state.id === fromStateId) ?? sortedStates[0];
   const toState = sortedStates.find((state) => state.id === toStateId) ?? sortedStates[sortedStates.length - 1];
   const difference = StateDifferenceEngine.compare(fromState, toState);
-  const delta = DeltaEngine.calculate(difference);
+  const delta = DeltaEngine.calculateBreakdown(difference);
 
   return (
     <div className="grid gap-4">
-      <Panel title="Choix des Ã©tats">
+      <Panel title="Choix des états">
         <div className="grid gap-3 md:grid-cols-2">
           <StateSelect label="Etat A" states={sortedStates} value={fromState.id} onChange={setFromStateId} />
           <StateSelect label="Etat B" states={sortedStates} value={toState.id} onChange={setToStateId} />
@@ -2013,15 +2065,15 @@ function StateComparison({ study }: { study?: Study }) {
       </Panel>
       <div className="grid gap-4 xl:grid-cols-[1fr_120px_1fr]">
         <StateSnapshot title="Etat A" state={fromState} />
-        <div className="glass flex items-center justify-center rounded-lg p-4 text-3xl text-goldSoft">â†’</div>
+        <div className="glass flex items-center justify-center rounded-lg p-4 text-3xl text-goldSoft">→</div>
         <StateSnapshot title="Etat B" state={toState} />
       </div>
-      <Panel title="DiffÃ©rences dÃ©tectÃ©es">
+      <Panel title="Différences détectées">
         <div className="mb-4 grid gap-3 md:grid-cols-4">
-          <StatCard label="DiffÃ©rences" value={difference.totalDifferences} />
-          <StatCard label="CatÃ©gories" value={difference.categoriesConcerned.length} />
-          <StatCard label="StabilitÃ©" value={difference.stabilityLevel} />
-          <StatCard label="Temps entre Ã©tats" value={difference.timeBetweenDays === null ? "non calculable" : `${difference.timeBetweenDays} jours`} />
+          <StatCard label="Différences" value={difference.totalDifferences} />
+          <StatCard label="Catégories" value={difference.categoriesConcerned.length} />
+          <StatCard label="Stabilité" value={difference.stabilityLevel} />
+          <StatCard label="Temps entre états" value={difference.timeBetweenDays === null ? "non calculable" : `${difference.timeBetweenDays} jours`} />
         </div>
         <div className="grid gap-2">
           {difference.items.map((item) => (
@@ -2033,20 +2085,23 @@ function StateComparison({ study }: { study?: Study }) {
               <p className="mt-2 text-sm leading-6 text-stone-200">{item.detail}</p>
               {item.before || item.after ? (
                 <p className="mt-2 text-xs text-stone-400">
-                  {item.before ? `Avant : ${item.before}` : ""} {item.after ? `AprÃ¨s : ${item.after}` : ""}
+                  {item.before ? `Avant : ${item.before}` : ""} {item.after ? `Après : ${item.after}` : ""}
                 </p>
               ) : null}
             </div>
           ))}
         </div>
       </Panel>
-      <DeltaPanel delta={delta} />
+      <DeltaPanel delta={delta.global} breakdown={delta} />
     </div>
   );
 }
 
 function UnderstandingEvolution({ study }: { study?: Study }) {
-  if (!study || study.states.length < 2) return <EmptyState />;
+  if (!study) return <EmptyState />;
+  if (study.states.length < 2) {
+    return <MethodologyEmpty title="Evolution non calculable" reason="Aucune évolution de compréhension ne peut être construite sans deux états comparables." needs={["deux états de compréhension", "un même objet de compréhension", "des formulations avant/après"]} />;
+  }
   const states = study.states.slice().sort((a, b) => a.date.localeCompare(b.date));
   const transitions = states.slice(1).map((state, index) => {
     const difference = StateDifferenceEngine.compare(states[index], state);
@@ -2056,12 +2111,12 @@ function UnderstandingEvolution({ study }: { study?: Study }) {
   return (
     <div className="grid gap-4">
       {transitions.map((transition) => (
-        <Panel key={`${transition.before.id}-${transition.after.id}`} title={`${transition.before.title} â†’ ${transition.after.title}`}>
+        <Panel key={`${transition.before.id}-${transition.after.id}`} title={`${transition.before.title} → ${transition.after.title}`}>
           <div className="grid gap-3 md:grid-cols-4">
-            <StatCard label="Î”(S) brut" value={transition.delta.score} />
-            <StatCard label="DiffÃ©rences" value={transition.difference.totalDifferences} />
-            <StatCard label="StabilitÃ©" value={transition.difference.stabilityLevel} />
-            <StatCard label="DurÃ©e" value={transition.difference.timeBetweenDays === null ? "non calculable" : `${transition.difference.timeBetweenDays} jours`} />
+            <StatCard label="Δ(S) brut" value={transition.delta.score} />
+            <StatCard label="Différences" value={transition.difference.totalDifferences} />
+            <StatCard label="Stabilité" value={transition.difference.stabilityLevel} />
+            <StatCard label="Durée" value={transition.difference.timeBetweenDays === null ? "non calculable" : `${transition.difference.timeBetweenDays} jours`} />
           </div>
           <div className="mt-4 grid gap-2">
             {transition.delta.limits.map((limit) => (
@@ -2080,8 +2135,8 @@ function ReflexivityEngineDashboard({ dashboard }: { dashboard: ReturnType<typeo
   return (
     <div className="grid gap-4">
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-        <StatCard label="Î” moyen" value={dashboard.averageDelta ?? "indicateurs insuffisants"} />
-        <StatCard label="Temps moyen entre Ã©tats" value={dashboard.averageDaysBetweenStates === null ? "indicateurs insuffisants" : `${dashboard.averageDaysBetweenStates} jours`} />
+        <StatCard label="Δ moyen" value={dashboard.averageDelta ?? "indicateurs insuffisants"} />
+        <StatCard label="Temps moyen entre états" value={dashboard.averageDaysBetweenStates === null ? "indicateurs insuffisants" : `${dashboard.averageDaysBetweenStates} jours`} />
         <StatCard label="Temps avant stabilisation" value={dashboard.averageDaysBeforeStabilization === null ? "indicateurs insuffisants" : `${dashboard.averageDaysBeforeStabilization} jours`} />
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
@@ -2095,7 +2150,7 @@ function ReflexivityEngineDashboard({ dashboard }: { dashboard: ReturnType<typeo
         </Panel>
       </div>
       <div className="grid gap-4 xl:grid-cols-2">
-        <Panel title="Ã‰motions frÃ©quentes">
+        <Panel title="Émotions fréquentes">
           <RankedList items={dashboard.frequentEmotions} empty="Indicateurs insuffisants." />
         </Panel>
         <Panel title="Catalyseurs selon observations">
@@ -2127,6 +2182,9 @@ function ReflexivityEngineDashboard({ dashboard }: { dashboard: ReturnType<typeo
 
 function Transitions({ study }: { study?: Study }) {
   if (!study) return <EmptyState />;
+  if (!study.transitions.length) {
+    return <MethodologyEmpty title="Aucune transition" reason="Aucune transition n'est créée : il faut deux états comparables dans la même étude et portant sur la même compréhension." needs={["état précédent", "état actuel", "même compréhension", "observation source"]} />;
+  }
   return (
     <div className="grid gap-4">
       {study.transitions.map((transition) => (
@@ -2157,6 +2215,9 @@ function Transitions({ study }: { study?: Study }) {
 
 function Emotions({ study }: { study?: Study }) {
   if (!study) return <EmptyState />;
+  if (!study.emotionObservations.length) {
+    return <MethodologyEmpty title="Aucune émotion documentée" reason="Aucune émotion validée ou proposée n'est attachée à cette étude." needs={["une expression émotionnelle", "son origine", "une observation source"]} />;
+  }
   return (
     <div className="grid gap-4">
       <Panel title="Suivi temporel">
@@ -2168,11 +2229,12 @@ function Emotions({ study }: { study?: Study }) {
             <div key={emotion.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
               <div className="flex items-center justify-between">
                 <p className="font-medium text-white">{emotion.canonicalEmotion ?? emotion.emotion}</p>
-                <Badge>{emotion.intensity}/10</Badge>
+                <Badge>{emotion.intensity == null ? "Intensité non renseignée" : `${emotion.intensity}/10`}</Badge>
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Badge>{emotion.polarity ?? "present"}</Badge>
                 <Badge>{emotion.scope ?? "indeterminate"}</Badge>
+                <Badge>{emotionOriginLabel(emotion.origin)}</Badge>
                 <Badge>{emotion.originalExpression ?? emotion.emotion}</Badge>
               </div>
               <p className="mt-2 text-sm text-stone-300">{emotion.context}</p>
@@ -2211,11 +2273,15 @@ function Catalysts({ study }: { study?: Study }) {
 
 function Recognitions({ study }: { study?: Study }) {
   if (!study) return <EmptyState />;
+  const validRecognitions = study.recognitions.filter((recognition) => recognition.confirmed || recognition.validation === "valide");
+  if (!validRecognitions.length) {
+    return <MethodologyEmpty title="Aucune reconnaissance validée" reason="Aucune reconnaissance validée." needs={["formulation exacte", "état précédent", "état actuel", "observation source", "validation"]} />;
+  }
   return (
     <div className="grid gap-4">
       <Panel title="Reconnaissances">
         <div className="grid gap-3">
-          {study.recognitions.map((recognition) => (
+          {validRecognitions.map((recognition) => (
             <div key={recognition.id} className="rounded-md border border-white/10 bg-white/[0.04] p-4">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="font-semibold text-white">{recognition.title}</h3>
@@ -2225,6 +2291,7 @@ function Recognitions({ study }: { study?: Study }) {
                 </div>
               </div>
               <p className="mt-3 leading-7 text-stone-100">{recognition.exactWording}</p>
+              <p className="mt-2 text-xs text-stone-500">Observation source : {recognition.sourceObservationIds?.join(", ") ?? "non renseignée"}</p>
               <div className="mt-4 grid gap-3 md:grid-cols-2">
                 <TagBlock title="Déclencheurs" items={recognition.triggers} />
                 <TagBlock title="Relations reconnues" items={recognition.newRecognizedRelations} />
@@ -2321,25 +2388,33 @@ function StateSnapshot({ title, state }: { title: string; state: Study["states"]
       <h3 className="mt-2 font-semibold text-white">{state.title}</h3>
       <p className="mt-3 text-sm leading-6 text-stone-200">{state.formulation || "Indicateurs insuffisants"}</p>
       <div className="mt-4 grid gap-3 sm:grid-cols-2">
-        <StatCard label="StabilitÃ©" value={`${state.stability}/10`} />
+        <StatCard label="Stabilité" value={`${state.stability}/10`} />
         <StatCard label="Confiance" value={`${state.confidence}/10`} />
       </div>
     </Panel>
   );
 }
 
-function DeltaPanel({ delta }: { delta: ReturnType<typeof DeltaEngine.calculate> }) {
+function DeltaPanel({ delta, breakdown }: { delta: ReturnType<typeof DeltaEngine.calculate>; breakdown?: ReturnType<typeof DeltaEngine.calculateBreakdown> }) {
   return (
-    <Panel title="Î”(S) - calcul transparent">
+    <Panel title="Δ(S) - calcul transparent">
+      {breakdown ? (
+        <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <StatCard label="Δ émotion" value={breakdown.emotion.interpretation} />
+          <StatCard label="Δ compréhension" value={breakdown.understanding.score} />
+          <StatCard label="Δ comportement" value={breakdown.behaviour.score} />
+          <StatCard label="Δ transmission" value={breakdown.transmission.interpretation} />
+        </div>
+      ) : null}
       <div className="mb-4 grid gap-3 md:grid-cols-4">
-        <StatCard label="Score brut" value={delta.score} />
+        <StatCard label="Δ global" value={delta.score} />
         <StatCard label="Facteurs positifs" value={delta.positiveFactors.length} />
-        <StatCard label="Facteurs nÃ©gatifs" value={delta.negativeFactors.length} />
+        <StatCard label="Facteurs négatifs" value={delta.negativeFactors.length} />
         <StatCard label="Facteurs neutres" value={delta.neutralFactors.length} />
       </div>
       <div className="grid gap-4 xl:grid-cols-3">
         <FactorList title="Facteurs positifs" factors={delta.positiveFactors} />
-        <FactorList title="Facteurs nÃ©gatifs" factors={delta.negativeFactors} />
+        <FactorList title="Facteurs négatifs" factors={delta.negativeFactors} />
         <FactorList title="Facteurs neutres" factors={delta.neutralFactors} />
       </div>
       <TagBlock title="Limites" items={delta.limits} />
@@ -2363,7 +2438,7 @@ function FactorList({ title, factors }: { title: string; factors: ReturnType<typ
             </div>
           ))
         ) : (
-          <p className="text-sm text-stone-500">Non renseignÃ©</p>
+          <p className="text-sm text-stone-500">Non renseigné</p>
         )}
       </div>
     </div>
@@ -2441,6 +2516,15 @@ function TagBlock({ title, items }: { title: string; items: string[] }) {
         {items.length ? items.map((item) => <Badge key={item}>{item}</Badge>) : <span className="text-sm text-stone-500">Non renseigné</span>}
       </div>
     </div>
+  );
+}
+
+function MethodologyEmpty({ title, reason, needs }: { title: string; reason: string; needs: string[] }) {
+  return (
+    <Panel title={title}>
+      <p className="text-sm leading-6 text-stone-300">{reason}</p>
+      <TagBlock title="Informations nécessaires" items={needs} />
+    </Panel>
   );
 }
 

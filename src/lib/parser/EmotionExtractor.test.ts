@@ -99,7 +99,7 @@ describe("EmotionExtractor", () => {
     ).study;
     const comparison = secondStudy.longitudinalComparisons?.at(-1);
 
-    expect(comparison?.potentialTransition).toBe("Changement potentiel detecte dans les reactions collectives decrites.");
+    expect(comparison?.potentialTransition).toBe("Evolution emotionnelle ou comportementale detectee, sans transition de comprehension.");
     expect(comparison?.status).toBe("proposed");
     expect(comparison?.conclusion).toContain("insuffisantes pour conclure");
     expect(comparison?.differences.map((difference) => difference.dimension)).toContain("mobilisation");

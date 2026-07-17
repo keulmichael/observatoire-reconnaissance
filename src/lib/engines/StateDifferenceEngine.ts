@@ -6,12 +6,19 @@ import type {
   UnderstandingState
 } from "@/lib/types";
 import { LanguageEngine, findReformulationCandidates, normalize } from "./LanguageEngine";
+import { classifyComparisonLabel, inferStateType } from "../scientific-model";
 
 export const StateDifferenceEngine = {
   compare(before: UnderstandingState, after: UnderstandingState): StateDifference {
     const language = LanguageEngine.compare(stateLanguageCorpus(before), stateLanguageCorpus(after));
     const items: DifferenceItem[] = [];
     const insufficientIndicators: string[] = [];
+    const beforeType = inferStateType(before);
+    const afterType = inferStateType(after);
+
+    if (beforeType !== afterType) {
+      insufficientIndicators.push(`Etats non comparables : ${beforeType} et ${afterType}.`);
+    }
 
     if (!before.confirmedElements.length && !before.uncertainElements.length) {
       insufficientIndicators.push("Etat A sans elements conceptuels suffisants.");
@@ -75,11 +82,17 @@ export const StateDifferenceEngine = {
         )
       );
     });
+    emotionsNew.forEach((value) => {
+      items.push(makeItem("addition", "emotion", "Observation", undefined, value, `Emotion apparue : ${value}`, 0.72));
+    });
+    emotionsDisappeared.forEach((value) => {
+      items.push(makeItem("removal", "emotion", "Observation", value, undefined, `Emotion non retrouvee : ${value}`, 0.72));
+    });
     decisionsNew.forEach((value) => {
-      items.push(makeItem("addition", "decision", "Transformation observee", undefined, value, `Decision ou comportement ajoute : ${value}`, 0.76));
+      items.push(makeItem("addition", "behaviour", "Transformation observee", undefined, value, `Comportement ajoute : ${value}`, 0.76));
     });
     decisionsAbandoned.forEach((value) => {
-      items.push(makeItem("removal", "decision", "Observation", value, undefined, `Decision ou comportement abandonne : ${value}`, 0.76));
+      items.push(makeItem("removal", "behaviour", "Observation", value, undefined, `Comportement abandonne : ${value}`, 0.76));
     });
     contradictions.forEach(([left, right]) => {
       items.push(
@@ -158,7 +171,9 @@ function makeItem(
 }
 
 function concepts(state: UnderstandingState): string[] {
-  return unique([...state.confirmedElements, ...state.uncertainElements, ...state.language]);
+  return unique([...state.confirmedElements, ...state.uncertainElements, ...state.language]).filter(
+    (value) => classifyComparisonLabel(value) === "concept"
+  );
 }
 
 function relations(state: UnderstandingState): string[] {
@@ -166,7 +181,7 @@ function relations(state: UnderstandingState): string[] {
 }
 
 function emotions(state: UnderstandingState): string[] {
-  return state.language.filter(isEmotionLike);
+  return unique([...state.language, ...state.uncertainElements, ...state.confirmedElements]).filter(isEmotionLike);
 }
 
 function added(beforeValues: string[], afterValues: string[]) {

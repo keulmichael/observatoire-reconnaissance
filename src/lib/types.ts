@@ -18,6 +18,24 @@ export type AppView =
   | "analysis";
 
 export type ConfirmationLevel = 1 | 2 | 3;
+export type ScientificEntityCategory =
+  | "Emotion"
+  | "Compréhension"
+  | "Comportement"
+  | "Concept"
+  | "Manifestation"
+  | "Catalyseur"
+  | "Evénement"
+  | "Relation"
+  | "Reconnaissance"
+  | "Métadonnée"
+  | "Lieu"
+  | "Personne"
+  | "Organisation"
+  | "Symbole";
+export type StateType = "EmotionalState" | "UnderstandingState" | "BehaviourState";
+export type EmotionOrigin = "declared_by_person" | "attributed_by_observer" | "proposed_by_engine" | "validated";
+export type ReflexiveRelationStatus = "fait observé" | "hypothèse" | "interprétation";
 export type ValidationStatus = "a valider" | "valide" | "conteste" | "revision demandee";
 export type RelationStatus = "observée" | "supposée" | "confirmée" | "invalidée";
 export type TransitionStage =
@@ -61,6 +79,7 @@ export interface Study {
 
 export interface UnderstandingState {
   id: string;
+  type?: StateType;
   title: string;
   date: string;
   scope?: StateScope;
@@ -140,6 +159,9 @@ export interface Relation {
   createdFromObservationAt?: string;
   confidence?: number;
   methodologicalStatus?: string;
+  studyId?: string;
+  observationId?: string;
+  relationSource?: "observateur" | "moteur" | "validation utilisateur";
 }
 
 export interface EmotionObservation {
@@ -151,7 +173,9 @@ export interface EmotionObservation {
   sourceKind?: DetectedEmotion["sourceKind"];
   polarity?: EmotionPolarity;
   scope?: EmotionScope;
-  intensity: number;
+  intensity?: number | null;
+  origin?: EmotionOrigin;
+  category?: "Emotion" | "Cognition";
   date: string;
   context: string;
   transitionId?: string;
@@ -218,6 +242,8 @@ export interface Recognition {
   transmissible: boolean;
   confirmed: boolean;
   stableOverTime: boolean;
+  validation?: ValidationStatus;
+  stability?: "non vérifiée" | "instable" | "stable";
   confirmationLevel: ConfirmationLevel;
   sourceObservationIds?: string[];
   sourceExcerpt?: string;
@@ -247,6 +273,16 @@ export interface TimelineEvent {
 export interface ReflexiveMapData {
   nodes: Node[];
   edges: Edge[];
+}
+
+export interface ReflexiveRelationMetadata {
+  type: string;
+  source: "observateur" | "moteur" | "validation utilisateur";
+  confidence: number;
+  studyId: string;
+  observationId?: string;
+  date: string;
+  status: ReflexiveRelationStatus;
 }
 
 export interface ObservatoryData {
@@ -578,6 +614,8 @@ export type DifferenceCategory =
   | "concept"
   | "relation"
   | "emotion"
+  | "behaviour"
+  | "metadata"
   | "decision"
   | "project"
   | "language"

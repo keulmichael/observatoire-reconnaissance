@@ -17,7 +17,8 @@ describe("LongitudinalObservationEngine", () => {
     const result = LongitudinalObservationEngine.compare(study, [current, previous], current, "2026-07-16T11:00:00.000Z");
 
     expect(result.previousObservationId).toBe(previous.id);
-    expect(result.potentialTransition).toBe("Changement potentiel detecte dans les reactions collectives decrites.");
+    expect(result.potentialTransition).toBe("Evolution emotionnelle ou comportementale detectee, sans transition de comprehension.");
+    expect(result.resultStatus).toBe("insufficient_data");
     expect(result.status).toBe("proposed");
   });
 
@@ -33,17 +34,10 @@ describe("LongitudinalObservationEngine", () => {
     expect(differenceDimensions).toContain("mobilisation");
     expect(differenceDimensions).toContain("comportement");
     expect(differenceDimensions).toContain("objetAttention");
-    expect(result.proposedPreviousState?.elements).toContain("faible emotion declaree");
-    expect(result.proposedPreviousState?.elements).toContain("faible mobilisation declaree");
-    expect(result.proposedPreviousState?.elements).toContain("portee : collectif");
-    expect(result.proposedPreviousState?.evidenceLevel).toBe("faible");
-    expect(result.proposedCurrentState?.elements).toContain("inquietude pour les animaux");
-    expect(result.proposedCurrentState?.elements).toContain("actions de solidarite");
-    expect(result.proposedCurrentState?.elements).toContain("volonte d'implication");
-    expect(result.proposedCurrentState?.elements).toContain("attention portee a animaux");
-    expect(result.proposedCurrentState?.elements).toContain("attention portee a faune");
-    expect(result.proposedCurrentState?.elements).toContain("attention portee a flore");
-    expect(result.proposedCurrentState?.elements.some((element) => /fontainebleau/i.test(element))).toBe(true);
+    expect(result.proposedPreviousState).toBeNull();
+    expect(result.proposedCurrentState).toBeNull();
+    expect(result.differences.map((difference) => difference.summary).join(" ")).toContain("Evolution émotionnelle");
+    expect(result.differences.map((difference) => difference.summary).join(" ")).toContain("Evolution comportementale");
   });
 
   it("flags collective generalization and never concludes to a durable national change", () => {

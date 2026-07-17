@@ -17,6 +17,7 @@ import { Download, Filter, Plus, Trash2 } from "lucide-react";
 import { Badge, Panel } from "./ui";
 import type { Study } from "@/lib/types";
 import { downloadJson } from "@/lib/analytics";
+import { automaticMapRelations, relationStyle } from "@/lib/scientific-model";
 
 const nodeTypes = [
   "manifestation",
@@ -52,7 +53,7 @@ export function ReflexiveMap({
   onChange: (nodes: Node[], edges: Edge[]) => void;
 }) {
   const [nodes, setNodes, onNodesChange] = useNodesState(study.map.nodes);
-  const [edges, setEdges, onEdgesChange] = useEdgesState(study.map.edges);
+  const [edges, setEdges, onEdgesChange] = useEdgesState(automaticMapRelations(study));
   const [filter, setFilter] = useState("tous");
   const [selectedNodeId, setSelectedNodeId] = useState<string | null>(null);
 
@@ -75,11 +76,23 @@ export function ReflexiveMap({
 
   const onConnect = useCallback(
     (connection: Connection) => {
-      const nextEdges = addEdge({ ...connection, label: "relation observée" }, edges);
+      const nextEdges = addEdge({
+        ...connection,
+        label: "relation observée",
+        style: relationStyle("fait observé"),
+        data: {
+          type: "relation observée",
+          source: "observateur",
+          confidence: 1,
+          studyId: study.id,
+          date: new Date().toISOString().slice(0, 10),
+          status: "fait observé"
+        }
+      }, edges);
       setEdges(nextEdges);
       persist(nodes, nextEdges);
     },
-    [edges, nodes, persist, setEdges]
+    [edges, nodes, persist, setEdges, study.id]
   );
 
   function addNode() {
