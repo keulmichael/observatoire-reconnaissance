@@ -22,6 +22,7 @@ import type {
   UnderstandingState
 } from "../types";
 import { stableId } from "./ObservationParser";
+import { comparableUnderstandingStates, containsUnderstanding } from "../scientific-model";
 
 type ScientificArtifacts = {
   manifestations: Manifestation[];
@@ -111,7 +112,9 @@ function buildScientificArtifacts(draft: ObservationAnalysisDraft, now: string):
     sourceKind: item.sourceKind,
     polarity: item.polarity ?? "present",
     scope: item.scope ?? "indeterminate",
-    intensity: 5,
+    intensity: null,
+    origin: item.expressionKind === "exprimee directement" ? "declared_by_person" : item.expressionKind === "attribuee par le narrateur" ? "attributed_by_observer" : "proposed_by_engine",
+    category: "Emotion",
     date: now.slice(0, 10),
     context: item.sourceExcerpt,
     duration: "non renseigne",
@@ -183,8 +186,10 @@ function buildScientificArtifacts(draft: ObservationAnalysisDraft, now: string):
 function buildStates(draft: ObservationAnalysisDraft, validProposalIds: string[], now: string): UnderstandingState[] {
   if (!hasIdentifiableBeforeAfter(draft)) return [];
   const acceptedConcepts = draft.detectedConcepts.filter(isIntegrated).map((concept) => concept.label);
-  const acceptedEmotions = draft.detectedEmotions.filter(isIntegrated).map((emotion) => emotion.label);
+  const understandingElements = acceptedConcepts.length ? acceptedConcepts : [draft.rawText];
+  if (!containsUnderstanding(draft.rawText)) return [];
   const base = {
+    type: "UnderstandingState" as const,
     sourceObservationIds: [draft.id],
     validatedProposalIds: validProposalIds,
     engineProvenance: ["ObservationParser", "StateDifferenceEngine"],
@@ -203,7 +208,7 @@ function buildStates(draft: ObservationAnalysisDraft, validProposalIds: string[]
       stability: 5,
       confidence: 4,
       confirmedElements: [],
-      uncertainElements: acceptedConcepts,
+      uncertainElements: understandingElements,
       language: [],
       associatedBehaviors: [],
       sourceExcerpt: draft.chronology[0]?.sourceExcerpt ?? draft.rawText,
@@ -218,8 +223,8 @@ function buildStates(draft: ObservationAnalysisDraft, validProposalIds: string[]
       stability: 4,
       confidence: 3,
       confirmedElements: [],
-      uncertainElements: acceptedConcepts,
-      language: acceptedEmotions,
+      uncertainElements: understandingElements,
+      language: [],
       associatedBehaviors: [],
       sourceExcerpt: draft.chronology[draft.chronology.length - 1]?.sourceExcerpt ?? draft.rawText,
       confidenceScore: 0.3,
@@ -249,6 +254,8 @@ function buildTransitions(
   now: string
 ): Transition[] {
   if (states.length < 2) return [];
+  const sameObservation = states[0].sourceObservationIds?.some((id) => states[1].sourceObservationIds?.includes(id));
+  if (!sameObservation && !comparableUnderstandingStates(states[0], states[1])) return [];
   return [
     {
       id: stableId("transition", draft.id),
@@ -285,7 +292,7 @@ function buildRecognitions(draft: ObservationAnalysisDraft, states: Understandin
       title: "Reconnaissance formulee",
       date: now.slice(0, 10),
       studyId: stableId("study", draft.id),
-      exactWording: draft.rawText,
+      exactWording: exactRecognitionWording(draft.rawText),
       author: "non renseigne",
       beforeStateId: states[0].id,
       afterStateId: states[1].id,
@@ -300,6 +307,8 @@ function buildRecognitions(draft: ObservationAnalysisDraft, states: Understandin
       transmissible: false,
       confirmed: false,
       stableOverTime: false,
+      validation: "a valider",
+      stability: "non vérifiée",
       confirmationLevel: 1,
       sourceObservationIds: [draft.id],
       sourceExcerpt: draft.rawText,
@@ -314,6 +323,13 @@ function buildRecognitions(draft: ObservationAnalysisDraft, states: Understandin
 
 function hasExplicitRecognition(rawText: string) {
   return /\b(j'ai compris|j’ai compris|elle a compris|il a compris|reconnaissance|nouvelle compr[ée]hension)\b/i.test(rawText);
+}
+
+function exactRecognitionWording(rawText: string) {
+  return rawText
+    .split(/(?<=[.!?])\s+/)
+    .find((sentence) => hasExplicitRecognition(sentence))
+    ?.trim() ?? rawText;
 }
 
 function buildTimeline(manifestations: Manifestation[], emotions: EmotionObservation[], catalysts: Catalyst[], now: string): TimelineEvent[] {

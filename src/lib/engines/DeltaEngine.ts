@@ -1,4 +1,5 @@
 import type { DeltaFactor, DeltaScore, DifferenceCategory, StateDifference } from "@/lib/types";
+import { deltaFromFactors, emptyDeltaScore } from "../scientific-model";
 
 type WeightRule = {
   category: DifferenceCategory;
@@ -12,8 +13,10 @@ export const DELTA_WEIGHTS: Record<string, WeightRule> = {
   conceptReformulation: { category: "concept", value: 1, label: "Reformulation probable de concept" },
   relationAddition: { category: "relation", value: 2, label: "Relation possible ajoutee" },
   relationRemoval: { category: "relation", value: -1, label: "Relation retiree" },
-  decisionAddition: { category: "decision", value: 2, label: "Decision ou comportement nouveau" },
-  decisionRemoval: { category: "decision", value: -1, label: "Decision ou comportement abandonne" },
+  emotionAddition: { category: "emotion", value: 0, label: "Emotion apparue" },
+  emotionRemoval: { category: "emotion", value: 0, label: "Emotion non retrouvee" },
+  decisionAddition: { category: "behaviour", value: 1, label: "Comportement nouveau" },
+  decisionRemoval: { category: "behaviour", value: -1, label: "Comportement abandonne" },
   projectAddition: { category: "project", value: 1, label: "Projet nouveau" },
   projectRemoval: { category: "project", value: -1, label: "Projet abandonne" },
   vocabularyChange: { category: "language", value: 1, label: "Evolution du vocabulaire" },
@@ -23,6 +26,31 @@ export const DELTA_WEIGHTS: Record<string, WeightRule> = {
 };
 
 export const DeltaEngine = {
+  calculateBreakdown(difference: StateDifference) {
+    const base = this.calculate(difference);
+    const byCategory = (categories: DifferenceCategory[]) =>
+      [...base.positiveFactors, ...base.negativeFactors, ...base.neutralFactors].filter((factor) =>
+        categories.includes(factor.category)
+      );
+    const emotion = deltaFromFactors(byCategory(["emotion"]), ["Δ émotion : variation descriptive, sans transformation automatique en compréhension."]);
+    const understanding = deltaFromFactors(byCategory(["concept", "relation", "language"]), difference.insufficientIndicators);
+    const behaviour = deltaFromFactors(byCategory(["behaviour", "decision", "project"]), []);
+    const transmission = deltaFromFactors(
+      byCategory(["transmission"]),
+      difference.categoriesConcerned.includes("transmission") ? [] : ["Δ transmission non calculé : aucune transmission documentée."]
+    );
+    const components = [emotion, understanding, behaviour, transmission];
+    const componentFactors = components.flatMap((component) => [
+      ...component.positiveFactors,
+      ...component.negativeFactors,
+      ...component.neutralFactors
+    ]);
+    const global = componentFactors.length
+      ? deltaFromFactors(componentFactors, unique(components.flatMap((component) => component.limits)))
+      : emptyDeltaScore(["Δ global non calculé : aucun sous-delta suffisamment documenté."]);
+    return { emotion, understanding, behaviour, transmission, global };
+  },
+
   calculate(difference: StateDifference): DeltaScore {
     const factors: DeltaFactor[] = [
       factor(DELTA_WEIGHTS.conceptAddition, difference.conceptsAdded.length, "Nombre de concepts ajoutes.", ids(difference, "concept", "addition")),
@@ -35,8 +63,10 @@ export const DeltaEngine = {
       ),
       factor(DELTA_WEIGHTS.relationAddition, difference.relationsAdded.length, "Nombre de relations possibles ajoutees.", ids(difference, "relation", "addition")),
       factor(DELTA_WEIGHTS.relationRemoval, difference.relationsRemoved.length, "Nombre de relations retirees.", ids(difference, "relation", "removal")),
-      factor(DELTA_WEIGHTS.decisionAddition, difference.decisionsNew.length, "Nombre de decisions ou comportements nouveaux.", ids(difference, "decision", "addition")),
-      factor(DELTA_WEIGHTS.decisionRemoval, difference.decisionsAbandoned.length, "Nombre de decisions ou comportements abandonnes.", ids(difference, "decision", "removal")),
+      factor(DELTA_WEIGHTS.emotionAddition, difference.emotionsNew.length, "Variation emotionnelle documentee separement.", ids(difference, "emotion", "addition")),
+      factor(DELTA_WEIGHTS.emotionRemoval, difference.emotionsDisappeared.length, "Variation emotionnelle documentee separement.", ids(difference, "emotion", "removal")),
+      factor(DELTA_WEIGHTS.decisionAddition, difference.decisionsNew.length, "Nombre de comportements nouveaux.", ids(difference, "behaviour", "addition")),
+      factor(DELTA_WEIGHTS.decisionRemoval, difference.decisionsAbandoned.length, "Nombre de comportements abandonnes.", ids(difference, "behaviour", "removal")),
       factor(DELTA_WEIGHTS.projectAddition, difference.projectsNew.length, "Nombre de projets nouveaux.", []),
       factor(DELTA_WEIGHTS.projectRemoval, difference.projectsAbandoned.length, "Nombre de projets abandonnes.", []),
       factor(DELTA_WEIGHTS.vocabularyChange, Math.abs(difference.language.vocabularyDelta), "Amplitude absolue de variation du vocabulaire.", []),
@@ -66,6 +96,10 @@ export const DeltaEngine = {
     };
   }
 };
+
+function unique(values: string[]) {
+  return [...new Set(values.filter(Boolean))];
+}
 
 function factor(rule: WeightRule, count: number, reason: string, sourceDifferenceIds: string[]): DeltaFactor {
   return {

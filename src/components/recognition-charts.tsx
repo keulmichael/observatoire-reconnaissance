@@ -20,24 +20,36 @@ import type { Study } from "@/lib/types";
 const colors = ["#d6b25e", "#7dd3fc", "#a7f3d0", "#f9a8d4", "#c4b5fd", "#fb7185"];
 
 export function RecognitionCharts({ study, mode }: { study: Study; mode: "emotions" | "recognitions" }) {
+  const validRecognitions = study.recognitions.filter((recognition) =>
+    recognition.confirmed || recognition.validation === "valide"
+  );
   const emotionTimeline = study.emotionObservations.map((emotion) => ({
     date: emotion.date.slice(5),
     emotion: emotion.emotion,
-    intensité: emotion.intensity
+    intensite: emotion.intensity ?? null
   }));
-
   const emotionDistribution = Array.from(
     study.emotionObservations.reduce((map, item) => {
       map.set(item.emotion, (map.get(item.emotion) ?? 0) + 1);
       return map;
     }, new Map<string, number>())
   ).map(([name, value]) => ({ name, value }));
-
-  const recognitions = study.recognitions.map((recognition) => ({
+  const recognitions = validRecognitions.map((recognition) => ({
     name: recognition.title,
     confirmation: recognition.confirmationLevel,
     stable: recognition.stableOverTime ? 1 : 0
   }));
+
+  if (mode === "recognitions" && !recognitions.length) {
+    return (
+      <div className="rounded-md border border-white/10 bg-white/[0.035] p-4 text-sm leading-6 text-stone-300">
+        Aucune reconnaissance validée. Il manque une formulation exacte, deux états de compréhension comparables,
+        une observation source et une validation.
+      </div>
+    );
+  }
+
+  const pieData = mode === "emotions" ? emotionDistribution : recognitions;
 
   return (
     <div className="grid gap-4 lg:grid-cols-2">
@@ -50,7 +62,7 @@ export function RecognitionCharts({ study, mode }: { study: Study; mode: "emotio
               <YAxis domain={[0, 10]} stroke="#a8a29e" />
               <Tooltip contentStyle={{ background: "#0b1728", border: "1px solid rgba(214,178,94,.3)" }} />
               <Legend />
-              <Line type="monotone" dataKey="intensité" stroke="#d6b25e" strokeWidth={2} />
+              <Line type="monotone" dataKey="intensite" stroke="#d6b25e" strokeWidth={2} connectNulls={false} />
             </LineChart>
           ) : (
             <BarChart data={recognitions}>
@@ -66,8 +78,8 @@ export function RecognitionCharts({ study, mode }: { study: Study; mode: "emotio
       <div className="h-72 rounded-md border border-white/10 bg-white/[0.035] p-3">
         <ResponsiveContainer width="100%" height="100%">
           <PieChart>
-            <Pie data={emotionDistribution} dataKey="value" nameKey="name" outerRadius={92} label>
-              {emotionDistribution.map((entry, index) => (
+            <Pie data={pieData} dataKey={mode === "emotions" ? "value" : "stable"} nameKey="name" outerRadius={92} label>
+              {pieData.map((entry, index) => (
                 <Cell key={entry.name} fill={colors[index % colors.length]} />
               ))}
             </Pie>
