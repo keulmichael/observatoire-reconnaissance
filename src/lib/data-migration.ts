@@ -9,8 +9,9 @@ import type {
   Study
 } from "./types";
 import { defaultAISettings } from "./ai/ObservationAI";
+import { createInitialTheories } from "./engines/TheoryEngine";
 
-export const CURRENT_SCHEMA_VERSION = 3 as const;
+export const CURRENT_SCHEMA_VERSION = 4 as const;
 
 export function migrateObservatoryData(input: ObservatoryData): ObservatoryData {
   return {
@@ -19,7 +20,12 @@ export function migrateObservatoryData(input: ObservatoryData): ObservatoryData 
     studies: input.studies.map(normalizeStudy),
     observationDrafts: input.observationDrafts ?? [],
     aiSettings: { ...defaultAISettings, ...(input.aiSettings ?? {}) },
-    aiObservationResults: input.aiObservationResults ?? []
+    aiObservationResults: input.aiObservationResults ?? [],
+    theories: input.theories?.length ? input.theories : createInitialTheories(),
+    theoryRevisionProposals: input.theoryRevisionProposals ?? [],
+    theoryPredictions: input.theoryPredictions ?? [],
+    reciprocalTestimonies: input.reciprocalTestimonies ?? [],
+    reflexiveSignatures: input.reflexiveSignatures ?? []
   };
 }
 

@@ -243,7 +243,7 @@ describe("ObservationParser", () => {
     const legacy = { version: 1 as const, studies: [makeStudy("legacy-study", "Legacy")] };
     const migrated = migrateObservatoryData(legacy);
 
-    expect(migrated.schemaVersion).toBe(3);
+    expect(migrated.schemaVersion).toBe(4);
     expect(migrated.studies).toHaveLength(1);
     expect(migrated.studies[0].observations).toEqual([]);
     expect(migrated.studies[0].structuredHistory).toBeInstanceOf(Array);

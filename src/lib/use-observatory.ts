@@ -3,11 +3,12 @@
 import { useEffect, useMemo, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { repository } from "./repository";
-import type { ObservationAnalysisDraft, ObservatoryData, Study } from "./types";
+import type { ObservationAnalysisDraft, ObservatoryData, Study, TheoryEvidenceRelation, TheoryPrediction, TheoryRevisionProposal } from "./types";
 import { downloadJson } from "./analytics";
 import { addObservationToStudy, constructScientificStudy } from "./parser/ScientificConstruction";
 import { migrateObservatoryData, normalizeStudy } from "./data-migration";
 import { formatStudyDeletionConfirmation } from "./study-deletion";
+import { buildTheoryEvidenceLink, TheoryEngine } from "./engines/TheoryEngine";
 
 export function useObservatory() {
   const [data, setData] = useState<ObservatoryData>({ version: 1, studies: [], observationDrafts: [] });
@@ -167,6 +168,76 @@ export function useObservatory() {
     });
   }
 
+  function refreshTheoryProposals() {
+    setData((current) => {
+      const proposals = TheoryEngine.propose(current);
+      if (!proposals.length) return current;
+      return {
+        ...current,
+        theoryRevisionProposals: [...proposals, ...(current.theoryRevisionProposals ?? [])]
+      };
+    });
+  }
+
+  function linkObservationToTheory(input: {
+    studyId: string;
+    observationId: string;
+    theoryId: string;
+    theoryElementId: string;
+    relation: TheoryEvidenceRelation;
+    reasoningSummary: string;
+  }) {
+    setData((current) => {
+      const study = current.studies.find((item) => item.id === input.studyId);
+      const observation = study?.observations?.find((item) => item.id === input.observationId);
+      if (!study || !observation) return current;
+      const sourceExcerpts = observation.sourceExcerpts.length ? observation.sourceExcerpts : [observation.rawText];
+      const link = buildTheoryEvidenceLink({
+        theoryId: input.theoryId,
+        theoryElementId: input.theoryElementId,
+        observationId: input.observationId,
+        studyId: input.studyId,
+        relation: input.relation,
+        researchLevel: "empirical",
+        sourceExcerpts,
+        reasoningSummary: input.reasoningSummary,
+        limitations: ["Lien cree par validation utilisateur."]
+      });
+      return {
+        ...current,
+        studies: current.studies.map((item) =>
+          item.id !== input.studyId
+            ? item
+            : {
+                ...item,
+                observations: (item.observations ?? []).map((record) =>
+                  record.id === input.observationId
+                    ? { ...record, theoryEvidenceLinks: [...(record.theoryEvidenceLinks ?? []), link] }
+                    : record
+                ),
+                updatedAt: new Date().toISOString()
+              }
+        )
+      };
+    });
+  }
+
+  function acceptTheoryRevision(proposalId: string, patch?: Parameters<typeof TheoryEngine.acceptRevisionProposal>[2]) {
+    setData((current) => TheoryEngine.acceptRevisionProposal(current, proposalId, patch));
+  }
+
+  function setTheoryProposalStatus(proposalId: string, status: TheoryRevisionProposal["status"]) {
+    setData((current) => TheoryEngine.setProposalStatus(current, proposalId, status));
+  }
+
+  function createTheoryPrediction(prediction: Omit<TheoryPrediction, "id" | "createdAt" | "updatedAt" | "status" | "futureObservationIds">) {
+    setData((current) => TheoryEngine.createPrediction(current, prediction));
+  }
+
+  function linkPredictionObservation(predictionId: string, observationId: string) {
+    setData((current) => TheoryEngine.linkFutureObservationToPrediction(current, predictionId, observationId));
+  }
+
   function integrateObservationDraft(draft: ObservationAnalysisDraft, targetStudyId: string | "new" = "new") {
     const validatedDraft: ObservationAnalysisDraft = { ...draft, status: "validated" };
     const targetStudy = data.studies.find((study) => study.id === targetStudyId);
@@ -208,6 +279,12 @@ export function useObservatory() {
     aiObservationResults: data.aiObservationResults ?? [],
     updateAISettings,
     saveAIObservationResult,
+    refreshTheoryProposals,
+    linkObservationToTheory,
+    acceptTheoryRevision,
+    setTheoryProposalStatus,
+    createTheoryPrediction,
+    linkPredictionObservation,
     saveObservationDraft,
     integrateObservationDraft
   };
