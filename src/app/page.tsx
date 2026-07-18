@@ -37,7 +37,7 @@ import {
   compareStates,
   exportStudy
 } from "@/lib/analytics";
-import type { AIConnectionStatus, AIObservationResult, AppView, ObservationAISettings, ObservationAnalysisDraft, Study, TransitionStage } from "@/lib/types";
+import type { AIConnectionStatus, AIObservationResult, AppView, ObservationAISettings, ObservationAnalysisDraft, Study, TheoryEvidenceRelation, TheoryRevisionProposal, TransitionStage } from "@/lib/types";
 import { RecognitionCharts } from "@/components/recognition-charts";
 import { ObservationAnalysis } from "@/components/journal/ObservationAnalysis";
 import { ObservationFollowup } from "@/components/journal/ObservationFollowup";
@@ -45,6 +45,7 @@ import { ObservationInput } from "@/components/journal/ObservationInput";
 import { DeltaEngine } from "@/lib/engines/DeltaEngine";
 import { ReflexivityDashboardEngine } from "@/lib/engines/ReflexivityDashboardEngine";
 import { StateDifferenceEngine } from "@/lib/engines/StateDifferenceEngine";
+import { TheoryEngine, reflexiveCycleSteps } from "@/lib/engines/TheoryEngine";
 import { TrajectoryEngine } from "@/lib/engines/TrajectoryEngine";
 import { parseObservation } from "@/lib/parser/ObservationParser";
 import { analyzeWithObservationAI, defaultAISettings } from "@/lib/ai/ObservationAI";
@@ -74,7 +75,13 @@ const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "catalysts", label: "Catalyseurs", icon: Sparkles },
   { id: "recognitions", label: "Reconnaissances", icon: Search },
   { id: "timeline", label: "Chronologie", icon: CalendarDays },
-  { id: "analysis", label: "Analyse", icon: BarChart3 }
+  { id: "analysis", label: "Analyse", icon: BarChart3 },
+  { id: "theory-lab", label: "Laboratoire theorique", icon: Microscope },
+  { id: "recognition-theorem", label: "Theoreme de la Reconnaissance", icon: GitBranch },
+  { id: "reflexive-cycle", label: "Cycle reflexif", icon: RefreshCw },
+  { id: "testimony-network", label: "Reseau des temoignages", icon: Network },
+  { id: "reflexive-signatures", label: "Signatures reflexives", icon: Brain },
+  { id: "theory-evolution", label: "Evolution de la theorie", icon: TrendingUp }
 ];
 
 const discernmentQuestions = [
@@ -125,6 +132,12 @@ export default function ObservatoryApp() {
     aiObservationResults,
     updateAISettings,
     saveAIObservationResult,
+    refreshTheoryProposals,
+    linkObservationToTheory,
+    acceptTheoryRevision,
+    setTheoryProposalStatus,
+    createTheoryPrediction,
+    linkPredictionObservation,
     saveObservationDraft,
     integrateObservationDraft
   } = useObservatory();
@@ -146,6 +159,8 @@ export default function ObservatoryApp() {
   const dashboard = useMemo(() => buildDashboard(data), [data]);
   const analysis = useMemo(() => buildAnalysis(data), [data]);
   const reflexivityDashboard = useMemo(() => ReflexivityDashboardEngine.build(selectedStudyData), [selectedStudyData]);
+  const theoryAssessments = useMemo(() => TheoryEngine.assess(data), [data]);
+  const reflexiveSignatures = useMemo(() => TheoryEngine.buildReflexiveSignatures(data), [data]);
   const timeline = useMemo(() => buildTimeline(selectedStudy), [selectedStudy]);
 
   const studies = data.studies.filter((study) =>
@@ -237,6 +252,7 @@ export default function ObservatoryApp() {
                 <div key={item.id}>
                   {item.id === "journal" ? <p className="mb-1 mt-2 px-3 text-xs uppercase tracking-[0.18em] text-stone-500">Mode Observation</p> : null}
                   {item.id === "dashboard" ? <p className="mb-1 mt-4 px-3 text-xs uppercase tracking-[0.18em] text-stone-500">Mode Expert</p> : null}
+                  {item.id === "theory-lab" ? <p className="mb-1 mt-4 px-3 text-xs uppercase tracking-[0.18em] text-stone-500">Mode Recherche</p> : null}
                   <button
                     className={`flex w-full items-center gap-3 rounded-md px-3 py-2 text-left text-sm transition ${
                       view === item.id
@@ -370,6 +386,28 @@ export default function ObservatoryApp() {
               <Analysis analysis={analysis} />
             </>
           )}
+          {view === "theory-lab" && (
+            <TheoryLab
+              data={data}
+              assessments={theoryAssessments}
+              onRefreshProposals={refreshTheoryProposals}
+              onLinkObservation={linkObservationToTheory}
+              onCreatePrediction={createTheoryPrediction}
+            />
+          )}
+          {view === "recognition-theorem" && <RecognitionTheorem data={data} assessments={theoryAssessments} />}
+          {view === "reflexive-cycle" && <ReflexiveCycleView studies={data.studies} />}
+          {view === "testimony-network" && <TestimonyNetwork data={data} />}
+          {view === "reflexive-signatures" && <ReflexiveSignaturesView signatures={reflexiveSignatures} />}
+          {view === "theory-evolution" && (
+            <TheoryEvolution
+              data={data}
+              onAccept={acceptTheoryRevision}
+              onReject={(id) => setTheoryProposalStatus(id, "rejected")}
+              onDefer={(id) => setTheoryProposalStatus(id, "deferred")}
+              onLinkPredictionObservation={linkPredictionObservation}
+            />
+          )}
         </section>
 
         <aside className="glass h-fit rounded-lg p-4 lg:sticky lg:top-4">
@@ -471,6 +509,492 @@ function Journal({
       ) : null}
     </div>
   );
+}
+
+function TheoryLab({
+  data,
+  assessments,
+  onRefreshProposals,
+  onLinkObservation,
+  onCreatePrediction
+}: {
+  data: ReturnType<typeof useObservatory>["data"];
+  assessments: ReturnType<typeof TheoryEngine.assess>;
+  onRefreshProposals: () => void;
+  onLinkObservation: (input: {
+    studyId: string;
+    observationId: string;
+    theoryId: string;
+    theoryElementId: string;
+    relation: TheoryEvidenceRelation;
+    reasoningSummary: string;
+  }) => void;
+  onCreatePrediction: (prediction: Omit<NonNullable<ReturnType<typeof useObservatory>["data"]["theoryPredictions"]>[number], "id" | "createdAt" | "updatedAt" | "status" | "futureObservationIds">) => void;
+}) {
+  const theories = data.theories ?? [];
+  const observations = allObservationChoices(data.studies);
+  const [theoryId, setTheoryId] = useState(theories[0]?.id ?? "");
+  const selectedTheory = theories.find((theory) => theory.id === theoryId) ?? theories[0];
+  const [elementId, setElementId] = useState(selectedTheory?.elements[0]?.id ?? "");
+  const selectedElement = selectedTheory?.elements.find((element) => element.id === elementId) ?? selectedTheory?.elements[0];
+  const [observationKey, setObservationKey] = useState(observations[0]?.key ?? "");
+  const [relation, setRelation] = useState<TheoryEvidenceRelation>("supports");
+  const [reasoningSummary, setReasoningSummary] = useState("Lien theorique propose et valide par l'utilisateur.");
+  const [predictionText, setPredictionText] = useState("");
+  const assessment = assessments.find((item) => item.theoryElementId === selectedElement?.id && item.theoryId === selectedTheory?.id);
+
+  function submitEvidenceLink() {
+    const observation = observations.find((item) => item.key === observationKey);
+    if (!selectedTheory || !selectedElement || !observation) return;
+    onLinkObservation({
+      studyId: observation.studyId,
+      observationId: observation.observationId,
+      theoryId: selectedTheory.id,
+      theoryElementId: selectedElement.id,
+      relation,
+      reasoningSummary
+    });
+  }
+
+  function submitPrediction() {
+    if (!selectedTheory || !selectedElement || !predictionText.trim()) return;
+    onCreatePrediction({
+      formulation: predictionText,
+      theoryId: selectedTheory.id,
+      theoryElementIds: [selectedElement.id],
+      applicationContext: "Observation future a documenter.",
+      expectedResult: "Resultat attendu a tester, sans certitude.",
+      observableCriteria: ["observation source", "extrait", "validation utilisateur"],
+      temporalWindow: "non definie",
+      author: "Utilisateur",
+      limitations: ["Prediction theorique prudente, non prophetique."]
+    });
+    setPredictionText("");
+  }
+
+  return (
+    <div className="grid gap-4">
+      <Panel title="Separation des niveaux">
+        <div className="grid gap-3 md:grid-cols-4">
+          <LevelCard title="Empirique" text="Observations, extraits, evenements, emotions, comportements." />
+          <LevelCard title="Analytique" text="Etats, transitions, comparaisons et Delta." />
+          <LevelCard title="Theorique" text="Axiomes, principes, propositions, theoremes et corollaires." />
+          <LevelCard title="Predictif" text="Predictions a tester ulterieurement." />
+        </div>
+        <p className="mt-4 rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
+          Flux obligatoire : Observation {"->"} Analyse {"->"} Interpretation proposee {"->"} Lien theorique propose {"->"} Validation utilisateur {"->"} Mise a jour eventuelle du soutien theorique.
+        </p>
+      </Panel>
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <Panel title="Theories">
+          <div className="grid gap-3">
+            {theories.map((theory) => (
+              <button
+                key={theory.id}
+                className={`rounded-md border p-3 text-left ${selectedTheory?.id === theory.id ? "border-gold/60 bg-gold/10" : "border-white/10 bg-white/[0.04]"}`}
+                onClick={() => {
+                  setTheoryId(theory.id);
+                  setElementId(theory.elements[0]?.id ?? "");
+                }}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-semibold text-white">{theory.title}</p>
+                  <Badge>{theory.versions.at(-1)?.version ?? "1.0"}</Badge>
+                </div>
+                <p className="mt-2 text-sm leading-6 text-stone-300">{theory.summary}</p>
+                <p className="mt-2 text-xs text-stone-500">Liee a : {theory.linkedTheoryIds.join(", ") || "aucune theorie"}</p>
+              </button>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Elements theoriques">
+          {selectedTheory ? (
+            <div className="grid gap-2">
+              {selectedTheory.elements.map((element) => (
+                <button
+                  key={element.id}
+                  className={`rounded-md border p-3 text-left ${selectedElement?.id === element.id ? "border-gold/60 bg-gold/10" : "border-white/10 bg-white/[0.04]"}`}
+                  onClick={() => setElementId(element.id)}
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <p className="font-medium text-white">{element.title}</p>
+                    <div className="flex flex-wrap gap-2">
+                      <Badge>{element.type}</Badge>
+                      <Badge>{element.status}</Badge>
+                    </div>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-stone-300">{element.statement}</p>
+                </button>
+              ))}
+            </div>
+          ) : <SmartEmpty text="Aucune theorie initialisee." />}
+        </Panel>
+      </div>
+
+      {selectedTheory && selectedElement ? (
+        <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+          <Panel title="Evaluation prudente">
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+              <StatCard label="Observations" value={assessment?.observationCount ?? 0} />
+              <StatCard label="Soutiens" value={assessment?.confirmations ?? 0} />
+              <StatCard label="Contradictions" value={assessment?.contradictions ?? 0} />
+              <StatCard label="Enrichissements" value={assessment?.enrichments ?? 0} />
+            </div>
+            <p className="mt-4 rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-300">
+              {assessment?.cautiousSummary ?? "Les donnees sont insuffisantes."}
+            </p>
+            <TraceBlock title="Questions ouvertes" items={assessment?.openQuestions ?? selectedElement.unresolvedQuestions} />
+            <TraceBlock title="Limites" items={selectedElement.limitations} />
+          </Panel>
+
+          <Panel title="Lier une observation a la theorie">
+            <div className="grid gap-3">
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-stone-200">Observation source</span>
+                <select className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white" value={observationKey} onChange={(event) => setObservationKey(event.target.value)}>
+                  {observations.map((item) => <option className="bg-ink" key={item.key} value={item.key}>{item.label}</option>)}
+                </select>
+              </label>
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-stone-200">Effet theorique valide par l&apos;utilisateur</span>
+                <select className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white" value={relation} onChange={(event) => setRelation(event.target.value as TheoryEvidenceRelation)}>
+                  <option className="bg-ink" value="supports">confirme / soutient</option>
+                  <option className="bg-ink" value="contradicts">contredit</option>
+                  <option className="bg-ink" value="enriches">enrichit</option>
+                  <option className="bg-ink" value="not-concerned">ne concerne pas</option>
+                </select>
+              </label>
+              <Textarea label="Interpretation proposee" value={reasoningSummary} onChange={setReasoningSummary} />
+              <button className="rounded-md bg-gold px-4 py-2 text-sm font-semibold text-night" onClick={submitEvidenceLink}>
+                Valider le lien theorique
+              </button>
+            </div>
+          </Panel>
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 xl:grid-cols-[1fr_1fr]">
+        <Panel title="Propositions de revision">
+          <button className="mb-3 rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={onRefreshProposals}>
+            Analyser les observations et proposer
+          </button>
+          <RevisionProposalList proposals={data.theoryRevisionProposals ?? []} />
+        </Panel>
+        <Panel title="Predictions">
+          <Textarea label="Nouvelle prediction prudente" value={predictionText} onChange={setPredictionText} />
+          <button className="mt-3 rounded-md bg-gold px-4 py-2 text-sm font-semibold text-night" onClick={submitPrediction}>
+            Creer une prediction a tester
+          </button>
+          <div className="mt-4 grid gap-2">
+            {(data.theoryPredictions ?? []).map((prediction) => (
+              <div key={prediction.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="font-medium text-white">{prediction.formulation}</p>
+                  <Badge>{prediction.status}</Badge>
+                </div>
+                <p className="mt-2 text-sm text-stone-400">{prediction.expectedResult}</p>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      </div>
+    </div>
+  );
+}
+
+function LevelCard({ title, text }: { title: string; text: string }) {
+  return (
+    <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+      <p className="text-xs uppercase tracking-[0.18em] text-stone-500">{title}</p>
+      <p className="mt-2 text-sm leading-6 text-stone-300">{text}</p>
+    </div>
+  );
+}
+
+function RevisionProposalList({ proposals }: { proposals: TheoryRevisionProposal[] }) {
+  if (!proposals.length) return <p className="text-sm text-stone-500">Aucune proposition generee.</p>;
+  return (
+    <div className="grid gap-2">
+      {proposals.slice(0, 8).map((proposal) => (
+        <div key={proposal.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="font-medium text-white">{proposal.kind}</p>
+            <div className="flex flex-wrap gap-2">
+              <Badge>{proposal.status}</Badge>
+              <Badge>{Math.round(proposal.confidence * 100)} %</Badge>
+            </div>
+          </div>
+          <p className="mt-2 text-sm leading-6 text-stone-300">{proposal.reasoningSummary}</p>
+          <p className="mt-2 text-xs text-stone-500">Sources : {proposal.observationIds.join(", ") || "aucune observation"}</p>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function RecognitionTheorem({
+  data,
+  assessments
+}: {
+  data: ReturnType<typeof useObservatory>["data"];
+  assessments: ReturnType<typeof TheoryEngine.assess>;
+}) {
+  const theory = (data.theories ?? []).find((item) => item.id === "theory-reflexive-recognition");
+  const theorem = theory?.elements.find((item) => item.id === "theorem-general-cycle");
+  const corollary = theory?.elements.find((item) => item.id === "corollary-universal-consciousness");
+  const assessment = assessments.find((item) => item.theoryElementId === theorem?.id);
+  if (!theory || !theorem) return <EmptyState />;
+  return (
+    <div className="grid gap-4">
+      <Panel title="Version actuelle">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge>{theory.versions.at(-1)?.version ?? "1.0"}</Badge>
+          <Badge>{theorem.status}</Badge>
+          <Badge>{theorem.confidenceLabel}</Badge>
+        </div>
+        <p className="mt-4 text-lg leading-8 text-white">{theorem.statement}</p>
+        {corollary ? <p className="mt-3 text-sm leading-6 text-goldSoft">{corollary.statement}</p> : null}
+      </Panel>
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Panel title="Arguments">
+          <TraceBlock title="Observations utilisees" items={assessment?.evidenceLinks.filter((link) => link.relation === "supports").map((link) => link.observationId) ?? []} />
+          <TraceBlock title="Etudes concernees" items={assessment?.evidenceLinks.map((link) => link.studyId) ?? []} />
+        </Panel>
+        <Panel title="Contre-arguments">
+          <TraceBlock title="Contradictions" items={assessment?.evidenceLinks.filter((link) => link.relation === "contradicts").map((link) => link.reasoningSummary) ?? []} />
+          <TraceBlock title="Zones d'incertitude" items={assessment?.uncertaintyZones ?? []} />
+        </Panel>
+      </div>
+      <Panel title="Graphique de progression">
+        <div className="grid gap-2 md:grid-cols-6">
+          {theory.versions.map((version, index) => (
+            <div key={version.id} className="rounded-md border border-gold/25 bg-gold/10 p-3">
+              <p className="text-xs text-stone-400">Version {version.version}</p>
+              <div className="mt-2 h-2 rounded-full bg-white/10">
+                <div className="h-2 rounded-full bg-gold" style={{ width: `${Math.max(15, ((index + 1) / theory.versions.length) * 100)}%` }} />
+              </div>
+              <p className="mt-2 text-xs leading-5 text-goldSoft">{version.reason}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+      <Panel title="Historique">
+        <TraceBlock title="Versions" items={theory.versions.map((version) => `${version.version} - ${version.createdAt} - ${version.reason}`)} />
+      </Panel>
+    </div>
+  );
+}
+
+function ReflexiveCycleView({ studies }: { studies: Study[] }) {
+  const observations = allObservationChoices(studies);
+  const positioned = observations.filter((item) => item.record.reflexiveCycleStepIds?.length);
+  return (
+    <div className="grid gap-4">
+      <Panel title="Cycle reflexif">
+        <div className="grid gap-2 md:grid-cols-6">
+          {reflexiveCycleSteps.map((step) => (
+            <div key={step} className="rounded-md border border-gold/25 bg-gold/10 p-3 text-center text-sm font-medium text-goldSoft">
+              {cycleStepLabel(step)}
+            </div>
+          ))}
+        </div>
+      </Panel>
+      <Panel title="Position des observations">
+        {positioned.length ? (
+          <div className="grid gap-2">
+            {positioned.map((item) => (
+              <div key={item.key} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                <p className="font-medium text-white">{item.label}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {item.record.reflexiveCycleStepIds?.map((step) => <Badge key={step}>{cycleStepLabel(step)}</Badge>)}
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-stone-400">Position dans le cycle non determinable.</p>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function TestimonyNetwork({ data }: { data: ReturnType<typeof useObservatory>["data"] }) {
+  const people = uniqueStrings(data.studies.flatMap((study) => (study.observations ?? []).flatMap((observation) => observation.detectedPeople.map((person) => person.label))));
+  return (
+    <div className="grid gap-4">
+      <Panel title="Carte des temoignages">
+        <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+          {people.map((person) => (
+            <div key={person} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <p className="font-medium text-white">{person}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                <Badge>temoin</Badge>
+                <Badge>miroir</Badge>
+                <Badge>observateur</Badge>
+                <Badge>observe</Badge>
+                <Badge>acteur</Badge>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Panel>
+      <Panel title="Liens reciproques documentes">
+        {(data.reciprocalTestimonies ?? []).length ? (
+          <div className="grid gap-2">
+            {(data.reciprocalTestimonies ?? []).map((item) => (
+              <div key={item.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                <p className="font-medium text-white">{item.witnessA} {"->"} {item.witnessB}</p>
+                <p className="mt-2 text-sm leading-6 text-stone-300">{item.testimonyAToB}</p>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <Badge>{item.effectStatusOnB}</Badge>
+                  <Badge>{item.effectStatusOnA}</Badge>
+                </div>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <p className="text-sm text-stone-400">Aucun temoignage reciproque valide. Aucun effet interieur n&apos;est deduit automatiquement.</p>
+        )}
+      </Panel>
+    </div>
+  );
+}
+
+function ReflexiveSignaturesView({ signatures }: { signatures: ReturnType<typeof TheoryEngine.buildReflexiveSignatures> }) {
+  return (
+    <Panel title="Signatures reflexives descriptives">
+      {signatures.length ? (
+        <div className="grid gap-3">
+          {signatures.map((signature) => (
+            <div key={signature.id} className="rounded-md border border-white/10 bg-white/[0.04] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold text-white">{signature.personLabel}</p>
+                <Badge>profil relationnel descriptif</Badge>
+              </div>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <TraceBlock title="Temoignages associes" items={signature.testimonyTypes} />
+                <TraceBlock title="Emotions documentees" items={signature.documentedEmotions} />
+                <TraceBlock title="Contradictions recurrentes" items={signature.recurrentContradictions} />
+                <TraceBlock title="Themes reveles" items={signature.revealedThemes} />
+                <TraceBlock title="Transformations liees" items={signature.linkedTransformations} />
+                <TraceBlock title="Limites" items={signature.sampleLimitations} />
+              </div>
+              <p className="mt-3 text-xs text-stone-500">Sorties interdites : {signature.prohibitedOutputs.join(", ")}.</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <SmartEmpty text="Aucune signature descriptive ne peut etre calculee sans personnes detectees dans les observations." />
+      )}
+    </Panel>
+  );
+}
+
+function TheoryEvolution({
+  data,
+  onAccept,
+  onReject,
+  onDefer,
+  onLinkPredictionObservation
+}: {
+  data: ReturnType<typeof useObservatory>["data"];
+  onAccept: (id: string) => void;
+  onReject: (id: string) => void;
+  onDefer: (id: string) => void;
+  onLinkPredictionObservation: (predictionId: string, observationId: string) => void;
+}) {
+  const observations = allObservationChoices(data.studies);
+  return (
+    <div className="grid gap-4">
+      <Panel title="Versions de theorie">
+        <div className="grid gap-3">
+          {(data.theories ?? []).flatMap((theory) => theory.versions.map((version) => (
+            <div key={version.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-white">{theory.title} - Version {version.version}</p>
+                <Badge>{version.author}</Badge>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-stone-300">{version.reason}</p>
+              <p className="mt-2 text-xs text-stone-500">Observations : {version.observationIds.join(", ") || "aucune"}</p>
+            </div>
+          )))}
+        </div>
+      </Panel>
+      <Panel title="Propositions a valider">
+        <div className="grid gap-3">
+          {(data.theoryRevisionProposals ?? []).map((proposal) => (
+            <div key={proposal.id} className="rounded-md border border-white/10 bg-white/[0.04] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-semibold text-white">{proposal.kind}</p>
+                <Badge>{proposal.status}</Badge>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-stone-300">{proposal.reasoningSummary}</p>
+              <TraceBlock title="Extraits" items={proposal.sourceExcerpts} />
+              {proposal.status === "proposed" ? (
+                <div className="mt-3 flex flex-wrap gap-2">
+                  <button className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={() => onAccept(proposal.id)}>Accepter</button>
+                  <button className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-200" onClick={() => onReject(proposal.id)}>Rejeter</button>
+                  <button className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => onDefer(proposal.id)}>Differer</button>
+                </div>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </Panel>
+      <Panel title="Predictions et observations futures">
+        <div className="grid gap-3">
+          {(data.theoryPredictions ?? []).map((prediction) => (
+            <div key={prediction.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-white">{prediction.formulation}</p>
+                <Badge>{prediction.status}</Badge>
+              </div>
+              <p className="mt-2 text-sm text-stone-400">{prediction.applicationContext}</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                {observations.slice(0, 4).map((observation) => (
+                  <button key={observation.key} className="rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200" onClick={() => onLinkPredictionObservation(prediction.id, observation.observationId)}>
+                    Lier {observation.observationId}
+                  </button>
+                ))}
+              </div>
+              <p className="mt-2 text-xs text-stone-500">Observations futures liees : {prediction.futureObservationIds.join(", ") || "aucune"}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function allObservationChoices(studies: Study[]) {
+  return studies.flatMap((study) =>
+    (study.observations ?? []).map((record) => ({
+      key: `${study.id}:${record.id}`,
+      studyId: study.id,
+      observationId: record.id,
+      label: `${study.title} - ${record.rawText.slice(0, 70)}`,
+      record
+    }))
+  );
+}
+
+function cycleStepLabel(step: string) {
+  const labels: Record<string, string> = {
+    relation: "Relation",
+    testimony: "Temoignage",
+    solitude: "Solitude",
+    recognition: "Reconnaissance",
+    transformation: "Transformation",
+    "new-relation": "Nouvelle relation"
+  };
+  return labels[step] ?? step;
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values.filter(Boolean))];
 }
 
 function ScopedStudyView({ study, children }: { study?: Study; children: React.ReactNode }) {

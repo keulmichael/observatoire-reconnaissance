@@ -15,7 +15,13 @@ export type AppView =
   | "catalysts"
   | "recognitions"
   | "timeline"
-  | "analysis";
+  | "analysis"
+  | "theory-lab"
+  | "recognition-theorem"
+  | "reflexive-cycle"
+  | "testimony-network"
+  | "reflexive-signatures"
+  | "theory-evolution";
 
 export type ConfirmationLevel = 1 | 2 | 3;
 export type ScientificEntityCategory =
@@ -287,11 +293,16 @@ export interface ReflexiveRelationMetadata {
 
 export interface ObservatoryData {
   version: 1;
-  schemaVersion?: 2 | 3;
+  schemaVersion?: 2 | 3 | 4;
   studies: Study[];
   observationDrafts?: ObservationAnalysisDraft[];
   aiSettings?: ObservationAISettings;
   aiObservationResults?: AIObservationResult[];
+  theories?: Theory[];
+  theoryRevisionProposals?: TheoryRevisionProposal[];
+  theoryPredictions?: TheoryPrediction[];
+  reciprocalTestimonies?: ReciprocalTestimony[];
+  reflexiveSignatures?: ReflexiveSignature[];
 }
 
 export type ObservationDraftStatus = "draft" | "reviewed" | "validated" | "rejected";
@@ -548,6 +559,10 @@ export interface ObservationRecord {
   aiLatency?: number;
   aiModel?: string;
   aiAnalyzedAt?: string;
+  theoryEvidenceLinks?: TheoryEvidenceLink[];
+  reflexiveCycleStepIds?: ReflexiveCycleStep[];
+  reciprocalTestimonyIds?: string[];
+  sufferingObservation?: SufferingObservation;
 }
 
 export interface OpenQuestion {
@@ -892,4 +907,278 @@ export interface LongitudinalObservationComparison {
     confidence: LongitudinalConfidence;
     savedAt: string;
   };
+}
+
+export type ResearchLevel = "empirical" | "analytical" | "theoretical" | "predictive";
+export type TheoryElementType =
+  | "axiom"
+  | "principle"
+  | "proposition"
+  | "demonstration"
+  | "theorem"
+  | "corollary"
+  | "open-hypothesis"
+  | "prediction";
+export type TheoryElementStatus =
+  | "hypothese"
+  | "formule"
+  | "en observation"
+  | "soutenu par certaines observations"
+  | "conteste"
+  | "insuffisamment documente"
+  | "revise"
+  | "abandonne";
+export type TheoryConfidenceLabel =
+  | "insuffisamment documente"
+  | "en observation"
+  | "soutenu par certaines observations"
+  | "conteste";
+export type TheoryEvidenceRelation = "supports" | "contradicts" | "enriches" | "not-concerned";
+export type TheoryEvidenceStatus = "proposed" | "validated" | "rejected" | "deferred";
+export type TheoryElementRelationType =
+  | "complete"
+  | "precise"
+  | "contredit"
+  | "generalise"
+  | "depend de"
+  | "reformule";
+export type TheoryRevisionProposalKind =
+  | "element-potentiellement-soutenu"
+  | "element-potentiellement-contredit"
+  | "element-potentiellement-enrichi"
+  | "donnees-insuffisantes"
+  | "nouvelle-question"
+  | "proposition-de-revision"
+  | "prediction-possible";
+export type TheoryProposalStatus = "proposed" | "accepted" | "edited" | "rejected" | "deferred";
+export type TheoryPredictionStatus =
+  | "proposee"
+  | "active"
+  | "confirmee partiellement"
+  | "non confirmee"
+  | "contredite"
+  | "abandonnee";
+export type ReflexiveCycleStep =
+  | "relation"
+  | "testimony"
+  | "solitude"
+  | "recognition"
+  | "transformation"
+  | "new-relation";
+export type ObservedEffectStatus =
+  | "effet directement formule"
+  | "effet attribue par l'observateur"
+  | "effet suppose"
+  | "effet confirme dans le temps";
+
+export interface Theory {
+  id: string;
+  title: string;
+  summary: string;
+  currentVersionId: string;
+  linkedTheoryIds: string[];
+  relationLinks: TheoryElementRelation[];
+  elements: TheoryElement[];
+  versions: TheoryVersion[];
+  history: TheoryHistoryEntry[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface TheoryVersion {
+  id: string;
+  theoryId: string;
+  version: string;
+  createdAt: string;
+  author: string;
+  reason: string;
+  observationIds: string[];
+  studyIds: string[];
+  previousVersionId?: string;
+  elementSnapshots: Array<{
+    id: string;
+    type: TheoryElementType;
+    title: string;
+    statement: string;
+    explanation: string;
+    status: TheoryElementStatus;
+    confidenceLabel: TheoryConfidenceLabel;
+    sourceObservationIds: string[];
+    sourceStudyIds: string[];
+    supportingEvidenceIds: string[];
+    contradictingEvidenceIds: string[];
+    enrichingEvidenceIds: string[];
+  }>;
+}
+
+export interface TheoryElement {
+  id: string;
+  theoryId: string;
+  parentElementIds?: string[];
+  type: TheoryElementType;
+  title: string;
+  statement: string;
+  explanation: string;
+  version: string;
+  status: TheoryElementStatus;
+  createdAt: string;
+  updatedAt: string;
+  author: string;
+  confidenceLabel: TheoryConfidenceLabel;
+  sourceObservationIds: string[];
+  sourceStudyIds: string[];
+  supportingEvidenceIds: string[];
+  contradictingEvidenceIds: string[];
+  enrichingEvidenceIds: string[];
+  unresolvedQuestions: string[];
+  limitations: string[];
+  revisionHistory: TheoryHistoryEntry[];
+}
+
+export interface TheoryElementRelation {
+  id: string;
+  sourceTheoryId: string;
+  sourceElementId: string;
+  targetTheoryId: string;
+  targetElementId: string;
+  relation: TheoryElementRelationType;
+  explanation: string;
+  createdAt: string;
+  author: string;
+}
+
+export interface TheoryEvidenceLink {
+  id: string;
+  theoryId: string;
+  theoryElementId: string;
+  observationId: string;
+  studyId: string;
+  relation: TheoryEvidenceRelation;
+  researchLevel: ResearchLevel;
+  sourceExcerpts: string[];
+  reasoningSummary: string;
+  limitations: string[];
+  status: TheoryEvidenceStatus;
+  createdAt: string;
+  validatedBy?: string;
+  validatedAt?: string;
+}
+
+export interface TheoryAssessment {
+  theoryId: string;
+  theoryElementId: string;
+  observationCount: number;
+  confirmations: number;
+  contradictions: number;
+  enrichments: number;
+  uncertaintyZones: string[];
+  confidenceLabel: TheoryConfidenceLabel;
+  openQuestions: string[];
+  cautiousSummary: string;
+  evidenceLinks: TheoryEvidenceLink[];
+}
+
+export interface TheoryRevisionProposal {
+  id: string;
+  kind: TheoryRevisionProposalKind;
+  theoryId: string;
+  theoryElementId: string;
+  observationIds: string[];
+  studyIds: string[];
+  sourceExcerpts: string[];
+  reasoningSummary: string;
+  confidence: number;
+  limitations: string[];
+  status: TheoryProposalStatus;
+  createdAt: string;
+  engineVersion: string;
+  decidedAt?: string;
+  decidedBy?: string;
+}
+
+export interface TheoryPrediction {
+  id: string;
+  formulation: string;
+  theoryId: string;
+  theoryElementIds: string[];
+  applicationContext: string;
+  expectedResult: string;
+  observableCriteria: string[];
+  temporalWindow: string;
+  status: TheoryPredictionStatus;
+  futureObservationIds: string[];
+  createdAt: string;
+  updatedAt: string;
+  author: string;
+  limitations: string[];
+}
+
+export interface TheoryHistoryEntry {
+  id: string;
+  date: string;
+  action:
+    | "theorie initialisee"
+    | "version creee"
+    | "revision proposee"
+    | "revision acceptee"
+    | "revision rejetee"
+    | "prediction creee"
+    | "lien de preuve valide";
+  elementId?: string;
+  author: string;
+  summary: string;
+  observationIds: string[];
+  studyIds: string[];
+}
+
+export interface ReciprocalTestimony {
+  id: string;
+  observationId: string;
+  studyId: string;
+  witnessA: string;
+  witnessB: string;
+  testimonyAToB: string;
+  responseB: string;
+  observedEffectOnB: string;
+  observedEffectOnA: string;
+  contradiction: string;
+  validation: string;
+  rejection: string;
+  silence: string;
+  integration: string;
+  transformation: string;
+  effectStatusOnB: ObservedEffectStatus;
+  effectStatusOnA: ObservedEffectStatus;
+  limitations: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ReflexiveSignature {
+  id: string;
+  personLabel: string;
+  studyIds: string[];
+  observationIds: string[];
+  testimonyTypes: string[];
+  documentedEmotions: string[];
+  recurrentContradictions: string[];
+  revealedThemes: string[];
+  responseForms: string[];
+  linkedTransformations: string[];
+  sampleLimitations: string[];
+  prohibitedOutputs: string[];
+  valueScore: null;
+}
+
+export interface SufferingObservation {
+  id: string;
+  observationId: string;
+  declaredEmotionalIntensity: string;
+  reportedSuffering: string;
+  supposedResistance: string;
+  receivedTestimony: string;
+  formulatedRecognition: string;
+  observableTransformation: string;
+  cautiousSummary: string;
+  limitations: string[];
 }
