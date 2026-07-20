@@ -27,34 +27,43 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       version: 1,
       ...base,
       ownerId,
-      studies: ((studiesResult.data ?? []) as Array<DataRow<Study>>).map((row) => row.data),
-      observationDrafts: ((draftsResult.data ?? []) as Array<DataRow<ObservationAnalysisDraft>>).map((row) => row.data),
-      aiObservationResults: ((aiResult.data ?? []) as Array<DataRow<AIObservationResult>>).map((row) => row.data)
+      studies: uniqueBy(((studiesResult.data ?? []) as Array<DataRow<Study>>).map((row) => row.data), (study) => study.id),
+      observationDrafts: uniqueBy(((draftsResult.data ?? []) as Array<DataRow<ObservationAnalysisDraft>>).map((row) => row.data), (draft) => draft.id),
+      aiObservationResults: uniqueBy(((aiResult.data ?? []) as Array<DataRow<AIObservationResult>>).map((row) => row.data), (result) => result.id)
     });
   }
 
   async save(data: ObservatoryData, ownerId: string): Promise<ObservatoryData> {
     const migrated = migrateObservatoryData({ ...data, ownerId });
+    const uniqueStudies = uniqueBy(migrated.studies, (study) => study.id);
+    const uniqueDrafts = uniqueBy(migrated.observationDrafts ?? [], (draft) => draft.id);
+    const uniqueAIResults = uniqueBy(migrated.aiObservationResults ?? [], (result) => result.id);
+    const normalizedData = {
+      ...migrated,
+      studies: uniqueStudies,
+      observationDrafts: uniqueDrafts,
+      aiObservationResults: uniqueAIResults
+    };
     const now = new Date().toISOString();
     const profile = {
       owner_id: ownerId,
       data: {
-        version: migrated.version,
-        schemaVersion: migrated.schemaVersion,
+        version: normalizedData.version,
+        schemaVersion: normalizedData.schemaVersion,
         ownerId,
-        createdAt: migrated.createdAt ?? now,
+        createdAt: normalizedData.createdAt ?? now,
         updatedAt: now,
-        aiSettings: migrated.aiSettings,
-        theories: migrated.theories ?? [],
-        theoryRevisionProposals: migrated.theoryRevisionProposals ?? [],
-        theoryPredictions: migrated.theoryPredictions ?? [],
-        reciprocalTestimonies: migrated.reciprocalTestimonies ?? [],
-        reflexiveSignatures: migrated.reflexiveSignatures ?? []
+        aiSettings: normalizedData.aiSettings,
+        theories: normalizedData.theories ?? [],
+        theoryRevisionProposals: normalizedData.theoryRevisionProposals ?? [],
+        theoryPredictions: normalizedData.theoryPredictions ?? [],
+        reciprocalTestimonies: normalizedData.reciprocalTestimonies ?? [],
+        reflexiveSignatures: normalizedData.reflexiveSignatures ?? []
       },
       updated_at: now
     };
-    const remoteStudyIds = new Map(migrated.studies.map((study) => [study.id, ownerScopedId(ownerId, study.id)]));
-    const studies = migrated.studies.map((study) => ({
+    const remoteStudyIds = new Map(uniqueStudies.map((study) => [study.id, ownerScopedId(ownerId, study.id)]));
+    const studies = uniqueStudies.map((study) => ({
       id: remoteStudyIds.get(study.id) ?? ownerScopedId(ownerId, study.id),
       owner_id: ownerId,
       title: study.title,
@@ -64,9 +73,9 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       updated_at: study.updatedAt ?? now,
       data: { ...study, ownerId }
     }));
-    const observations = migrated.studies.flatMap((study) =>
+    const observations = uniqueStudies.flatMap((study) =>
       (study.observations ?? []).map((record) => ({
-        id: ownerScopedId(ownerId, record.id),
+        id: ownerScopedId(ownerId, `${study.id}:${record.id}`),
         owner_id: ownerId,
         study_id: remoteStudyIds.get(study.id) ?? ownerScopedId(ownerId, study.id),
         status: record.status,
@@ -77,7 +86,7 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
         data: { ...record, ownerId, studyId: study.id }
       }))
     );
-    const drafts = (migrated.observationDrafts ?? []).map((draft) => ({
+    const drafts = uniqueDrafts.map((draft) => ({
       id: ownerScopedId(ownerId, draft.id),
       owner_id: ownerId,
       status: draft.status,
@@ -86,7 +95,7 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       raw_text: draft.rawText,
       data: draft
     }));
-    const aiResults = (migrated.aiObservationResults ?? []).map((result) => ({
+    const aiResults = uniqueAIResults.map((result) => ({
       id: ownerScopedId(ownerId, result.id),
       owner_id: ownerId,
       provider: result.provider,
@@ -106,12 +115,22 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
     ];
     const results = await Promise.all(operations);
     results.forEach((result) => throwIfError(result.error));
-    return migrated;
+    return normalizedData;
   }
 }
 
 function ownerScopedId(ownerId: string, id: string) {
   return `${ownerId}:${id}`;
+}
+
+function uniqueBy<T>(items: T[], getKey: (item: T) => string) {
+  const seen = new Set<string>();
+  return items.filter((item) => {
+    const key = getKey(item);
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 
 function throwIfError(error: unknown) {
