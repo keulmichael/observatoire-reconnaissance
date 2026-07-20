@@ -83,6 +83,8 @@ export interface Study {
   deltaScores?: PersistentDeltaScore[];
   longitudinalComparisons?: LongitudinalObservationComparison[];
   multidimensionalChanges?: MultidimensionalChange[];
+  studySyntheses?: StudySynthesis[];
+  activeStudySynthesisId?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -658,6 +660,64 @@ export interface MultidimensionalChange {
   engineVersion: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export type StudySynthesisConfidenceLevel = "Très élevé" | "Élevé" | "Moyen" | "Faible";
+export type StudySynthesisClaimKind = "fait observe" | "tendance statistique" | "interpretation proposee" | "hypothese nouvelle" | "limite";
+
+export interface StudySynthesisEvidence {
+  observationId: string;
+  excerpt: string;
+}
+
+export interface StudySynthesisClaim {
+  id: string;
+  kind: StudySynthesisClaimKind;
+  text: string;
+  confidence: StudySynthesisConfidenceLevel;
+  justification: string;
+  evidence: StudySynthesisEvidence[];
+}
+
+export interface StudySynthesisStatisticItem {
+  label: string;
+  count: number;
+  observationIds: string[];
+  evidence: StudySynthesisEvidence[];
+}
+
+export interface StudySynthesisStatistics {
+  totalObservations: number;
+  periodStart: string | null;
+  periodEnd: string | null;
+  participants: string[];
+  dimensions: StudySynthesisStatisticItem[];
+  emotions: StudySynthesisStatisticItem[];
+  behaviours: StudySynthesisStatisticItem[];
+  concepts: StudySynthesisStatisticItem[];
+  representations: StudySynthesisStatisticItem[];
+  transformations: StudySynthesisStatisticItem[];
+  relations: StudySynthesisStatisticItem[];
+}
+
+export interface StudySynthesisSection {
+  id: string;
+  title: string;
+  paragraphs: string[];
+  claims: StudySynthesisClaim[];
+}
+
+export interface StudySynthesis {
+  id: string;
+  studyId: string;
+  version: number;
+  generatedAt: string;
+  model: string;
+  observationsAnalyzed: number;
+  analysisDurationMs: number;
+  statistics: StudySynthesisStatistics;
+  sections: StudySynthesisSection[];
+  markdown: string;
 }
 
 export interface OpenQuestion {

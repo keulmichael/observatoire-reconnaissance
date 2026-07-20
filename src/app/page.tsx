@@ -12,6 +12,7 @@ import {
   Copy,
   Download,
   Eye,
+  FileText,
   GitCompare,
   GitBranch,
   Home,
@@ -39,7 +40,7 @@ import {
   compareStates,
   exportStudy
 } from "@/lib/analytics";
-import type { AIConnectionStatus, AIObservationResult, AppView, ObservationAISettings, ObservationAnalysisDraft, Study, TheoryEvidenceRelation, TheoryRevisionProposal, TransitionStage } from "@/lib/types";
+import type { AIConnectionStatus, AIObservationResult, AppView, ObservationAISettings, ObservationAnalysisDraft, Study, StudySynthesis, TheoryEvidenceRelation, TheoryRevisionProposal, TransitionStage } from "@/lib/types";
 import { RecognitionCharts } from "@/components/recognition-charts";
 import { ObservationAnalysis } from "@/components/journal/ObservationAnalysis";
 import { ObservationFollowup } from "@/components/journal/ObservationFollowup";
@@ -63,6 +64,7 @@ import {
   validateLongitudinalComparison,
   type LongitudinalEditPatch
 } from "@/lib/longitudinal-review";
+import { synthesisFilename } from "@/lib/engines/study-synthesis";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "journal", label: "Journal d'Observation", icon: ClipboardList },
@@ -144,6 +146,7 @@ export default function ObservatoryApp() {
     setTheoryProposalStatus,
     createTheoryPrediction,
     linkPredictionObservation,
+    generateStudySynthesis,
     saveObservationDraft,
     integrateObservationDraft,
     authEmail,
@@ -392,6 +395,7 @@ export default function ObservatoryApp() {
               updateStudy={updateStudy}
               deleteStudy={deleteStudy}
               duplicateStudy={duplicateStudy}
+              generateStudySynthesis={generateStudySynthesis}
               isDeletingStudy={isDeletingStudy}
               studyNotice={studyNotice}
             />
@@ -1461,6 +1465,7 @@ const studyTabs = [
   { id: "transitions", label: "Transitions" },
   { id: "delta", label: "Delta" },
   { id: "recognitions", label: "Reconnaissances" },
+  { id: "synthesis", label: "Synthèse" },
   { id: "trajectories", label: "Trajectoires" },
   { id: "questions", label: "Questions" },
   { id: "stats", label: "Statistiques" },
@@ -2345,6 +2350,188 @@ function StudyHistory({ study }: { study: Study }) {
   );
 }
 
+function StudySynthesisPanel({
+  study,
+  updateStudy,
+  generateStudySynthesis
+}: {
+  study: Study;
+  updateStudy: (study: Study) => void;
+  generateStudySynthesis: (studyId: string) => string;
+}) {
+  const syntheses = study.studySyntheses ?? [];
+  const active = syntheses.find((item) => item.id === study.activeStudySynthesisId) ?? syntheses[0];
+  const [selectedId, setSelectedId] = useState(active?.id ?? "");
+  const [compareId, setCompareId] = useState(syntheses.find((item) => item.id !== selectedId)?.id ?? "");
+  const [progress, setProgress] = useState(0);
+  const selected = syntheses.find((item) => item.id === selectedId) ?? active;
+  const compared = syntheses.find((item) => item.id === compareId);
+
+  function runGeneration() {
+    setProgress(15);
+    window.setTimeout(() => {
+      const id = generateStudySynthesis(study.id);
+      setSelectedId(id);
+      setProgress(100);
+      window.setTimeout(() => setProgress(0), 700);
+    }, 40);
+  }
+
+  function restoreVersion(synthesis: StudySynthesis) {
+    updateStudy({ ...study, activeStudySynthesisId: synthesis.id, updatedAt: new Date().toISOString() });
+    setSelectedId(synthesis.id);
+  }
+
+  return (
+    <div className="grid gap-4">
+      <Panel title="Synthèse d'étude">
+        <div className="flex flex-wrap items-center gap-2">
+          <button className="inline-flex items-center gap-2 rounded-md bg-gold px-4 py-2 text-sm font-semibold text-night" onClick={runGeneration}>
+            <FileText className="h-4 w-4" aria-hidden /> Générer la synthèse
+          </button>
+          {selected ? (
+            <>
+              <button className="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => downloadMarkdown(selected)}>
+                <Download className="h-4 w-4" aria-hidden /> Markdown
+              </button>
+              <button className="inline-flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => printSynthesisPdf(selected)}>
+                <Download className="h-4 w-4" aria-hidden /> PDF
+              </button>
+            </>
+          ) : null}
+        </div>
+        {progress ? (
+          <div className="mt-4">
+            <div className="h-2 overflow-hidden rounded-full bg-white/10">
+              <div className="h-full rounded-full bg-gold transition-all" style={{ width: `${progress}%` }} />
+            </div>
+            <p className="mt-2 text-xs text-stone-400">{progress < 100 ? "Analyse en cours..." : "Synthèse générée."}</p>
+          </div>
+        ) : null}
+        {!selected ? (
+          <div className="mt-4">
+            <SmartEmpty text="Aucune synthèse générée. Lancez une génération manuelle pour analyser les observations de cette étude." />
+          </div>
+        ) : null}
+      </Panel>
+
+      {selected ? (
+        <>
+          <div className="grid gap-3 md:grid-cols-4">
+            <StatCard label="Version" value={`v${selected.version}`} />
+            <StatCard label="Observations" value={selected.observationsAnalyzed} />
+            <StatCard label="Durée" value={`${selected.analysisDurationMs} ms`} />
+            <StatCard label="Modèle" value={selected.model.replace("StudySynthesisEngine:", "")} />
+          </div>
+
+          <Panel title="Versions">
+            <div className="grid gap-3 md:grid-cols-[1fr_1fr_auto]">
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-stone-200">Version consultée</span>
+                <select className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white" value={selected.id} onChange={(event) => setSelectedId(event.target.value)}>
+                  {syntheses.map((synthesis) => (
+                    <option key={synthesis.id} value={synthesis.id}>v{synthesis.version} - {formatBuildDate(synthesis.generatedAt)}</option>
+                  ))}
+                </select>
+              </label>
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-stone-200">Comparer avec</span>
+                <select className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white" value={compareId} onChange={(event) => setCompareId(event.target.value)}>
+                  <option value="">Aucune comparaison</option>
+                  {syntheses.filter((synthesis) => synthesis.id !== selected.id).map((synthesis) => (
+                    <option key={synthesis.id} value={synthesis.id}>v{synthesis.version} - {formatBuildDate(synthesis.generatedAt)}</option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex items-end">
+                <button className="rounded-md border border-gold/30 px-3 py-2 text-sm text-goldSoft" onClick={() => restoreVersion(selected)}>
+                  Revenir à cette version
+                </button>
+              </div>
+            </div>
+            {compared ? <SynthesisComparison current={selected} compared={compared} /> : null}
+          </Panel>
+
+          <SynthesisReport synthesis={selected} />
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function SynthesisReport({ synthesis }: { synthesis: StudySynthesis }) {
+  return (
+    <div className="grid gap-4">
+      {synthesis.sections.map((section) => (
+        <Panel key={section.id} title={section.title}>
+          <div className="grid gap-3">
+            {section.paragraphs.map((paragraph, index) => (
+              <p key={`${section.id}-paragraph-${index}`} className="text-sm leading-6 text-stone-300">{paragraph}</p>
+            ))}
+            {section.claims.length ? (
+              <div className="grid gap-2">
+                {section.claims.map((claim) => (
+                  <div key={claim.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge>{claim.kind}</Badge>
+                      <Badge>Confiance : {claim.confidence}</Badge>
+                    </div>
+                    <p className="mt-2 text-sm leading-6 text-white">{claim.text}</p>
+                    <p className="mt-2 text-xs leading-5 text-stone-400">{claim.justification}</p>
+                    <div className="mt-2 grid gap-1">
+                      {claim.evidence.length ? claim.evidence.map((evidence) => (
+                        <p key={`${claim.id}-${evidence.observationId}`} className="text-xs leading-5 text-stone-500">
+                          Source {evidence.observationId} : {evidence.excerpt}
+                        </p>
+                      )) : <p className="text-xs text-stone-500">Aucune observation directe suffisante.</p>}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        </Panel>
+      ))}
+    </div>
+  );
+}
+
+function SynthesisComparison({ current, compared }: { current: StudySynthesis; compared: StudySynthesis }) {
+  const currentClaims = current.sections.flatMap((section) => section.claims);
+  const comparedClaims = compared.sections.flatMap((section) => section.claims);
+  return (
+    <div className="mt-4 grid gap-3 md:grid-cols-3">
+      <StatCard label="Observations v actuelle" value={current.observationsAnalyzed} />
+      <StatCard label="Observations comparée" value={compared.observationsAnalyzed} />
+      <StatCard label="Conclusions nouvelles" value={Math.max(0, currentClaims.length - comparedClaims.length)} />
+    </div>
+  );
+}
+
+function downloadMarkdown(synthesis: StudySynthesis) {
+  downloadText(synthesisFilename(synthesis, "md"), synthesis.markdown, "text/markdown");
+}
+
+function printSynthesisPdf(synthesis: StudySynthesis) {
+  const printable = window.open("", "_blank", "noopener,noreferrer");
+  if (!printable) return;
+  printable.document.write(`<!doctype html><html><head><title>${escapeHtml(synthesisFilename(synthesis, "html"))}</title><style>body{font-family:Arial,sans-serif;line-height:1.5;padding:32px;color:#111} h1,h2{color:#111} pre{white-space:pre-wrap;font-family:inherit}</style></head><body><pre>${escapeHtml(synthesis.markdown)}</pre><script>window.print();</script></body></html>`);
+  printable.document.close();
+}
+
+function downloadText(filename: string, content: string, type: string) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+function escapeHtml(value: string) {
+  return value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;");
+}
+
 function StudyExportImport({ study }: { study: Study }) {
   return (
     <Panel title="Export / import de l'etude">
@@ -2397,6 +2584,7 @@ function Studies(props: {
   updateStudy: (study: Study) => void;
   deleteStudy: (id: string) => void;
   duplicateStudy: (id: string) => void;
+  generateStudySynthesis: (studyId: string) => string;
   isDeletingStudy: boolean;
   studyNotice: string;
 }) {
@@ -2652,6 +2840,7 @@ function Studies(props: {
           {tab === "transitions" && <StudyTransitions study={selected} />}
           {tab === "delta" && <StudyDelta study={selected} />}
           {tab === "recognitions" && <Recognitions study={selected} />}
+          {tab === "synthesis" && <StudySynthesisPanel study={selected} updateStudy={props.updateStudy} generateStudySynthesis={props.generateStudySynthesis} />}
           {tab === "trajectories" && <StudyTrajectories study={selected} studies={props.studies} />}
           {tab === "questions" && <StudyQuestions study={selected} updateStudy={props.updateStudy} />}
           {tab === "stats" && <StudyStats study={selected} />}
