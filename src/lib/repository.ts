@@ -1,40 +1,117 @@
+import type { User } from "@supabase/supabase-js";
 import { demoData } from "./demo-data";
 import { migrateObservatoryData } from "./data-migration";
 import type { ObservatoryData } from "./types";
 import { deleteStudyWithPersistence } from "./study-deletion";
+import { createSupabaseBrowserClient, isSupabaseConfigured } from "./supabase/client";
+import { LocalCacheRepository } from "./repositories/LocalCacheRepository";
+import { SupabaseObservatoryRepository } from "./repositories/SupabaseObservatoryRepository";
+import { SyncService, type SyncSnapshot, type SyncStatus } from "./repositories/SyncService";
 
-const STORAGE_KEY = "observatoire-reconnaissance:v1";
+export const STORAGE_KEY = "observatoire-reconnaissance:v1";
+
+const localCache = new LocalCacheRepository(STORAGE_KEY, demoData);
+const supabaseRepository = new SupabaseObservatoryRepository(createSupabaseBrowserClient());
+const syncService = new SyncService(localCache, supabaseRepository);
+
+export type RepositorySession = {
+  user: User | null;
+  configured: boolean;
+};
+
+export type MigrationSummary = {
+  hasLocalData: boolean;
+  studies: number;
+  observations: number;
+  drafts: number;
+  exportData: ObservatoryData;
+};
 
 export const repository = {
-  load(): ObservatoryData {
-    if (typeof window === "undefined") return migrateObservatoryData(demoData);
-    const raw = window.localStorage.getItem(STORAGE_KEY);
-    if (!raw) {
-      const migrated = migrateObservatoryData({ version: 1, studies: [] });
-      this.save(migrated);
-      return migrated;
-    }
-    try {
-      const parsed = JSON.parse(raw) as ObservatoryData;
-      const migrated = migrateObservatoryData(parsed);
-      this.save(migrated);
-      return migrated;
-    } catch {
-      const migrated = migrateObservatoryData({ version: 1, studies: [] });
-      this.save(migrated);
-      return migrated;
-    }
+  configured: isSupabaseConfigured(),
+  localCache,
+  supabaseRepository,
+  syncService,
+
+  loadLocal(): ObservatoryData {
+    return localCache.load();
   },
-  save(data: ObservatoryData) {
-    if (typeof window === "undefined") return;
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data, null, 2));
+
+  async session(): Promise<RepositorySession> {
+    if (!isSupabaseConfigured()) return { user: null, configured: false };
+    const { data } = await createSupabaseBrowserClient().auth.getSession();
+    return { user: data.session?.user ?? null, configured: true };
   },
+
+  async load(): Promise<SyncSnapshot> {
+    const session = await this.session();
+    return syncService.load(session.user?.id ?? null);
+  },
+
+  async save(data: ObservatoryData): Promise<SyncSnapshot> {
+    const session = await this.session();
+    return syncService.save(data, session.user?.id ?? null);
+  },
+
   reset() {
     const migrated = migrateObservatoryData(demoData);
-    this.save(migrated);
+    localCache.save(migrated);
     return migrated;
   },
+
   deleteStudy(data: ObservatoryData, studyId: string) {
-    return deleteStudyWithPersistence(data, studyId, (nextData) => this.save(nextData));
+    return deleteStudyWithPersistence(data, studyId, (nextData) => {
+      localCache.save(nextData);
+      void this.save(nextData);
+    });
+  },
+
+  async signIn(email: string, password: string) {
+    const client = createSupabaseBrowserClient();
+    return client.auth.signInWithPassword({ email, password });
+  },
+
+  async signUp(email: string, password: string) {
+    const client = createSupabaseBrowserClient();
+    return client.auth.signUp({ email, password });
+  },
+
+  async signOut() {
+    const client = createSupabaseBrowserClient();
+    return client.auth.signOut();
+  },
+
+  migrationSummary(): MigrationSummary {
+    const exportData = localCache.load();
+    return {
+      hasLocalData: exportData.studies.length > 0 || (exportData.observationDrafts ?? []).length > 0,
+      studies: exportData.studies.length,
+      observations: exportData.studies.reduce((sum, study) => sum + (study.observations ?? []).length, 0),
+      drafts: exportData.observationDrafts?.length ?? 0,
+      exportData
+    };
+  },
+
+  async migrateLocalToRemote(ownerId: string): Promise<{ data: ObservatoryData; status: SyncStatus }> {
+    const data = localCache.load();
+    const owned = withOwner(data, ownerId);
+    const saved = await syncService.save(owned, ownerId);
+    localCache.save(saved.data);
+    return saved;
   }
 };
+
+function withOwner(data: ObservatoryData, ownerId: string): ObservatoryData {
+  const now = new Date().toISOString();
+  return migrateObservatoryData({
+    ...data,
+    ownerId,
+    updatedAt: now,
+    studies: data.studies.map((study) => ({
+      ...study,
+      ownerId,
+      updatedAt: study.updatedAt ?? now,
+      observations: (study.observations ?? []).map((record) => ({ ...record, ownerId }))
+    }))
+  });
+}

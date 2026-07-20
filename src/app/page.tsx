@@ -16,6 +16,8 @@ import {
   GitBranch,
   Home,
   Import,
+  LogOut,
+  Lock,
   Microscope,
   Network,
   Plus,
@@ -48,8 +50,10 @@ import { StateDifferenceEngine } from "@/lib/engines/StateDifferenceEngine";
 import { TheoryEngine, reflexiveCycleSteps } from "@/lib/engines/TheoryEngine";
 import { TrajectoryEngine } from "@/lib/engines/TrajectoryEngine";
 import { parseObservation } from "@/lib/parser/ObservationParser";
+import { extractCanonicalDimensions } from "@/lib/parser/DimensionExtractor";
 import { analyzeWithObservationAI, defaultAISettings } from "@/lib/ai/ObservationAI";
 import { emotionOriginLabel, inferStateType } from "@/lib/scientific-model";
+import { analysisScopeSummary, dataForAnalysisScope } from "@/lib/analysis-scope";
 import {
   editLongitudinalComparison,
   normalizeComparison,
@@ -72,6 +76,8 @@ const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "reflexivity-engine", label: "Moteur de Réflexivité", icon: Microscope },
   { id: "map", label: "Carte réflexive", icon: Network },
   { id: "emotions", label: "Émotions", icon: Activity },
+  { id: "attitudes-representations", label: "Representations", icon: SlidersHorizontal },
+  { id: "multidimensional-changes", label: "Transformations multidimensionnelles", icon: GitCompare },
   { id: "catalysts", label: "Catalyseurs", icon: Sparkles },
   { id: "recognitions", label: "Reconnaissances", icon: Search },
   { id: "timeline", label: "Chronologie", icon: CalendarDays },
@@ -139,7 +145,16 @@ export default function ObservatoryApp() {
     createTheoryPrediction,
     linkPredictionObservation,
     saveObservationDraft,
-    integrateObservationDraft
+    integrateObservationDraft,
+    authEmail,
+    authConfigured,
+    syncStatus,
+    syncError,
+    signIn,
+    signUp,
+    signOut,
+    migrationSummary,
+    migrateLocalToRemote
   } = useObservatory();
   const [view, setView] = useState<AppView>("journal");
   const [query, setQuery] = useState("");
@@ -152,12 +167,17 @@ export default function ObservatoryApp() {
   const [aiConnectionTesting, setAIConnectionTesting] = useState(false);
   const [lastAnalysisNotice, setLastAnalysisNotice] = useState("Analyse locale uniquement");
   const effectiveAISettings = aiSettings ?? defaultAISettings;
-  const selectedStudyData = useMemo(
-    () => ({ ...data, studies: selectedStudy ? [selectedStudy] : [] }),
-    [data, selectedStudy]
+  const selectedAnalysisScope = useMemo(
+    () => selectedStudyId ? { mode: "selected-study" as const, studyId: selectedStudyId } : { mode: "all-studies" as const },
+    [selectedStudyId]
   );
-  const dashboard = useMemo(() => buildDashboard(data), [data]);
-  const analysis = useMemo(() => buildAnalysis(data), [data]);
+  const allStudiesAnalysisScope = useMemo(() => ({ mode: "all-studies" as const }), []);
+  const selectedStudyData = useMemo(
+    () => dataForAnalysisScope(data, selectedAnalysisScope),
+    [data, selectedAnalysisScope]
+  );
+  const dashboard = useMemo(() => buildDashboard(dataForAnalysisScope(data, allStudiesAnalysisScope)), [data, allStudiesAnalysisScope]);
+  const analysis = useMemo(() => buildAnalysis(dataForAnalysisScope(data, allStudiesAnalysisScope)), [data, allStudiesAnalysisScope]);
   const reflexivityDashboard = useMemo(() => ReflexivityDashboardEngine.build(selectedStudyData), [selectedStudyData]);
   const theoryAssessments = useMemo(() => TheoryEngine.assess(data), [data]);
   const reflexiveSignatures = useMemo(() => TheoryEngine.buildReflexiveSignatures(data), [data]);
@@ -245,6 +265,17 @@ export default function ObservatoryApp() {
               Observer le chemin Δ de la compréhension sans le confondre avec une preuve de vérité.
             </p>
           </div>
+          <AuthPanel
+            configured={authConfigured}
+            userEmail={authEmail}
+            syncStatus={syncStatus}
+            syncError={syncError}
+            onSignIn={signIn}
+            onSignUp={signUp}
+            onSignOut={signOut}
+            migrationSummary={migrationSummary}
+            onMigrate={migrateLocalToRemote}
+          />
           <nav className="grid gap-1" aria-label="Navigation principale">
             {views.map((item) => {
               const Icon = item.icon;
@@ -349,7 +380,7 @@ export default function ObservatoryApp() {
           {view === "followup" && <ObservationFollowup drafts={observationDrafts} study={selectedStudy} />}
           {view === "dashboard" && (
             <>
-              <AnalysisScope scope="all" />
+              <AnalysisScope scope="all" studies={data.studies} />
               <Dashboard dashboard={dashboard} studies={studies} selectStudy={selectStudy} setView={setView} />
             </>
           )}
@@ -377,12 +408,14 @@ export default function ObservatoryApp() {
           )}
           {view === "map" && selectedStudy && <ReflexiveMap study={selectedStudy} onChange={updateMap} />}
           {view === "emotions" && <ScopedStudyView study={selectedStudy}><Emotions study={selectedStudy} /></ScopedStudyView>}
+          {view === "attitudes-representations" && <ScopedStudyView study={selectedStudy}><AttitudesRepresentations study={selectedStudy} /></ScopedStudyView>}
+          {view === "multidimensional-changes" && <ScopedStudyView study={selectedStudy}><MultidimensionalChanges study={selectedStudy} /></ScopedStudyView>}
           {view === "catalysts" && <ScopedStudyView study={selectedStudy}><Catalysts study={selectedStudy} /></ScopedStudyView>}
           {view === "recognitions" && <ScopedStudyView study={selectedStudy}><Recognitions study={selectedStudy} /></ScopedStudyView>}
           {view === "timeline" && <Timeline events={timeline} />}
           {view === "analysis" && (
             <>
-              <AnalysisScope scope="all" />
+              <AnalysisScope scope="all" studies={data.studies} />
               <Analysis analysis={analysis} />
             </>
           )}
@@ -1006,13 +1039,117 @@ function ScopedStudyView({ study, children }: { study?: Study; children: React.R
   );
 }
 
-function AnalysisScope({ scope, study }: { scope: "selected" | "all"; study?: Study }) {
+function AuthPanel({
+  configured,
+  userEmail,
+  syncStatus,
+  syncError,
+  onSignIn,
+  onSignUp,
+  onSignOut,
+  migrationSummary,
+  onMigrate
+}: {
+  configured: boolean;
+  userEmail: string | null;
+  syncStatus: string;
+  syncError: string;
+  onSignIn: (email: string, password: string) => Promise<void>;
+  onSignUp: (email: string, password: string) => Promise<void>;
+  onSignOut: () => Promise<void>;
+  migrationSummary: () => { hasLocalData: boolean; studies: number; observations: number; drafts: number; exportData: unknown };
+  onMigrate: () => Promise<unknown>;
+}) {
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [notice, setNotice] = useState("");
+  const [busy, setBusy] = useState(false);
+  const summary = migrationSummary();
+
+  async function run(action: "signin" | "signup" | "migrate" | "signout") {
+    setBusy(true);
+    setNotice("");
+    try {
+      if (action === "signin") await onSignIn(email, password);
+      if (action === "signup") await onSignUp(email, password);
+      if (action === "migrate") {
+        const blob = new Blob([JSON.stringify(summary.exportData, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `observatoire-export-avant-migration-${new Date().toISOString().slice(0, 10)}.json`;
+        link.click();
+        URL.revokeObjectURL(url);
+        await onMigrate();
+      }
+      if (action === "signout") await onSignOut();
+      setNotice(action === "migrate" ? "Migration terminee. Les donnees locales sont conservees jusqu'a suppression explicite." : "Operation terminee.");
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Operation impossible.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="mb-4 rounded-md border border-white/10 bg-white/[0.04] p-3">
+      <div className="mb-2 flex items-center justify-between gap-2">
+        <div className="flex items-center gap-2 text-sm font-medium text-white">
+          <Lock className="h-4 w-4 text-goldSoft" aria-hidden />
+          Compte
+        </div>
+        <Badge>{syncLabel(syncStatus)}</Badge>
+      </div>
+      {!configured ? (
+        <p className="text-xs leading-5 text-amber-200">Supabase non configure. Le cache local reste disponible, mais la base distante ne peut pas etre source de verite.</p>
+      ) : userEmail ? (
+        <div className="grid gap-2">
+          <p className="truncate text-xs text-stone-300">{userEmail}</p>
+          <button className="flex items-center justify-center gap-2 rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200" disabled={busy} onClick={() => void run("signout")}>
+            <LogOut className="h-3.5 w-3.5" aria-hidden /> Deconnexion
+          </button>
+          {summary.hasLocalData ? (
+            <button className="rounded-md border border-gold/30 px-3 py-2 text-xs text-goldSoft" disabled={busy} onClick={() => void run("migrate")}>
+              Migrer mes donnees locales vers mon compte ({summary.studies} etude(s), {summary.observations} observation(s))
+            </button>
+          ) : null}
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          <input className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-xs text-white" placeholder="email" value={email} onChange={(event) => setEmail(event.target.value)} />
+          <input className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-xs text-white" placeholder="mot de passe" type="password" value={password} onChange={(event) => setPassword(event.target.value)} />
+          <div className="grid grid-cols-2 gap-2">
+            <button className="rounded-md bg-gold px-3 py-2 text-xs font-semibold text-night" disabled={busy} onClick={() => void run("signin")}>Connexion</button>
+            <button className="rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200" disabled={busy} onClick={() => void run("signup")}>Creer</button>
+          </div>
+        </div>
+      )}
+      {syncError ? <p className="mt-2 text-xs text-red-200">{syncError}</p> : null}
+      {notice ? <p className="mt-2 text-xs text-goldSoft">{notice}</p> : null}
+    </div>
+  );
+}
+
+function syncLabel(status: string) {
+  if (status === "synced") return "Synchronise";
+  if (status === "syncing") return "En cours";
+  if (status === "offline") return "Hors ligne";
+  if (status === "error") return "Erreur de synchronisation";
+  return "Cache local";
+}
+
+function AnalysisScope({ scope, study, studies = [] }: { scope: "selected" | "all"; study?: Study; studies?: Study[] }) {
+  const explicitScope = scope === "selected" && study
+    ? { mode: "selected-study" as const, studyId: study.id }
+    : { mode: "all-studies" as const };
+  const scopedStudies = scope === "selected" && study ? [study] : studies;
   return (
     <Panel title="Contexte d'analyse">
       <div className="flex flex-wrap gap-3 text-sm text-stone-200">
         <span className={scope === "selected" ? "text-goldSoft" : "text-stone-500"}>○ étude sélectionnée</span>
         <span className={scope === "all" ? "text-goldSoft" : "text-stone-500"}>○ toutes les études</span>
       </div>
+      <p className="mt-2 text-sm leading-6 text-goldSoft">{analysisScopeSummary(scopedStudies, explicitScope)}</p>
       <p className="mt-2 text-sm leading-6 text-stone-400">
         {scope === "selected"
           ? `Les résultats utilisent uniquement ${study ? `l'étude « ${study.title} »` : "l'étude sélectionnée"}.`
@@ -1443,9 +1580,10 @@ function ObservationImpact({ observationId, study }: { observationId: string; st
   const transitions = study.transitions.filter((item) => item.sourceObservationIds?.includes(observationId));
   const deltas = (study.deltaScores ?? []).filter((item) => item.sourceObservationIds.includes(observationId));
   const longitudinalComparisons = (study.longitudinalComparisons ?? []).filter((item) => item.sourceObservationIds.includes(observationId));
+  const multidimensionalChanges = (study.multidimensionalChanges ?? []).filter((item) => item.sourceObservationIds.includes(observationId));
   return (
     <div className="mt-3 rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
-      Comparaison avec les observations anterieures de cette etude : {longitudinalComparisons.length} proposition(s). Ce que cette observation a change : {states.length} etat(s), {transitions.length} transition(s), {deltas.length} Delta(s). {states.length || transitions.length || deltas.length || longitudinalComparisons.length ? "" : "Aucune transition complete n'a ete creee, car les donnees restent insuffisantes."}
+      Ce qui semble avoir change : {multidimensionalChanges.length} changement(s) multidimensionnel(s), {longitudinalComparisons.length} comparaison(s) longitudinale(s), {states.length} etat(s), {transitions.length} transition(s), {deltas.length} Delta(s). {states.length || transitions.length || deltas.length || longitudinalComparisons.length || multidimensionalChanges.length ? "" : "Aucune transition complete n'a ete creee, car les donnees restent insuffisantes."}
     </div>
   );
 }
@@ -2262,7 +2400,7 @@ function Studies(props: {
   isDeletingStudy: boolean;
   studyNotice: string;
 }) {
-  const selected = props.studies.find((study) => study.id === props.selectedStudyId) ?? props.studies[0];
+  const selected = props.selectedStudyId ? props.studies.find((study) => study.id === props.selectedStudyId) : undefined;
   const [tab, setTab] = useState("overview");
   const [journalQuery, setJournalQuery] = useState("");
   const [journalSort, setJournalSort] = useState<"desc" | "asc">("desc");
@@ -2327,11 +2465,16 @@ function Studies(props: {
         ? {
             ...observation,
             detectedEmotions: [...observation.detectedEmotions, ...newEmotions],
+            detectedDimensions: extractCanonicalDimensions({ ...observation, detectedEmotions: [...observation.detectedEmotions, ...newEmotions] }),
             updatedAt: now,
-            enginesExecuted: [...new Set([...observation.enginesExecuted, "EmotionExtractor"])],
-            engineResultsSummary: [...observation.engineResultsSummary, `${newEmotions.length} emotion(s) proposee(s) apres reanalyse.`]
+            enginesExecuted: [...new Set([...observation.enginesExecuted, "EmotionExtractor", "DimensionExtractor", "MultidimensionalChangeEngine"])],
+            engineResultsSummary: [...observation.engineResultsSummary, `${newEmotions.length} emotion(s) proposee(s) apres reanalyse. Dimensions canoniques recalculees.`]
           }
-        : observation;
+        : {
+            ...observation,
+            detectedDimensions: extractCanonicalDimensions(observation),
+            enginesExecuted: [...new Set([...observation.enginesExecuted, "DimensionExtractor", "MultidimensionalChangeEngine"])]
+          };
     });
     const emotionReanalyzedStudy: Study = {
       ...selected,
@@ -2345,7 +2488,7 @@ function Studies(props: {
           objectType: "Study",
           objectId: selected.id,
           sourceObservationIds: (selected.observations ?? []).map((observation) => observation.id),
-          summary: "Reanalyse emotionnelle des observations existantes ; nouvelles propositions conservees sans validation automatique."
+          summary: "Reanalyse emotionnelle et multidimensionnelle des observations existantes ; nouvelles propositions conservees sans validation automatique."
         }
       ]
     };
@@ -2745,7 +2888,9 @@ function Emotions({ study }: { study?: Study }) {
   return (
     <div className="grid gap-4">
       <Panel title="Suivi temporel">
-        <RecognitionCharts study={study} mode="emotions" />
+        {study.emotionObservations.some((emotion) => emotion.intensity != null)
+          ? <RecognitionCharts study={study} mode="emotions" />
+          : <SmartEmpty text="Intensite non disponible" />}
       </Panel>
       <Panel title="Observations émotionnelles">
         <div className="grid gap-3 md:grid-cols-2">
@@ -2753,7 +2898,7 @@ function Emotions({ study }: { study?: Study }) {
             <div key={emotion.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
               <div className="flex items-center justify-between">
                 <p className="font-medium text-white">{emotion.canonicalEmotion ?? emotion.emotion}</p>
-                <Badge>{emotion.intensity == null ? "Intensité non renseignée" : `${emotion.intensity}/10`}</Badge>
+                <Badge>{emotion.intensity == null ? "Intensite non disponible" : `${emotion.intensity}/10`}</Badge>
               </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 <Badge>{emotion.polarity ?? "present"}</Badge>
@@ -2767,6 +2912,96 @@ function Emotions({ study }: { study?: Study }) {
           ))}
         </div>
       </Panel>
+    </div>
+  );
+}
+
+function AttitudesRepresentations({ study }: { study?: Study }) {
+  if (!study) return <EmptyState />;
+  const elements = (study.observations ?? [])
+    .flatMap((observation) => (observation.detectedDimensions ?? []).map((dimension) => ({ observation, dimension })))
+    .filter(({ dimension }) => dimension.category === "Attitude" || dimension.category === "Representation");
+  if (!elements.length) {
+    return <MethodologyEmpty title="Aucune attitude ou representation documentee" reason="Les observations de cette etude ne contiennent pas encore d'attitude ou de representation proposee." needs={["un extrait source", "un objet concerne", "une validation utilisateur"]} />;
+  }
+  return (
+    <div className="grid gap-4">
+      <Panel title="Chronologie des attitudes et representations">
+        <div className="grid gap-3">
+          {elements.map(({ observation, dimension }) => (
+            <div key={dimension.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="font-medium text-white">{dimension.label}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Badge>{dimension.category}</Badge>
+                  <Badge>{dimension.subtype ?? "sans sous-type"}</Badge>
+                  <Badge>{dimension.polarity}</Badge>
+                </div>
+              </div>
+              <p className="mt-2 text-sm leading-6 text-stone-300">{dimension.sourceExcerpt}</p>
+              <p className="mt-2 text-xs text-stone-500">{observation.createdAt.slice(0, 10)} - objet : {dimension.object ?? "non precise"} - observation {observation.id}</p>
+            </div>
+          ))}
+        </div>
+      </Panel>
+      <Panel title="Changements de polarite">
+        <div className="grid gap-2">
+          {(study.multidimensionalChanges ?? [])
+            .flatMap((change) => change.changesDetected.filter((item) => item.kind === "polarity-inversion"))
+            .map((change) => (
+              <div key={change.id} className="rounded-md border border-gold/25 bg-gold/10 p-3 text-sm leading-6 text-goldSoft">
+                {change.before ?? "etat anterieur"} -&gt; {change.after ?? "etat actuel"} : {change.summary}
+              </div>
+            ))}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function MultidimensionalChanges({ study }: { study?: Study }) {
+  if (!study) return <EmptyState />;
+  const changes = study.multidimensionalChanges ?? [];
+  if (!changes.length) {
+    return <MethodologyEmpty title="Aucun changement multidimensionnel propose" reason="Ajoutez au moins deux observations actives puis utilisez Reanalyser toute l'etude." needs={["deux observations chronologiques", "dimensions validees ou proposees", "extraits sources"]} />;
+  }
+  return (
+    <div className="grid gap-4">
+      {changes.map((change) => (
+        <Panel key={change.id} title={change.proposedCurrentState?.summary ?? "Ce qui semble avoir change"}>
+          <div className="grid gap-3 md:grid-cols-3">
+            <StatCard label="Statut" value={change.status} />
+            <StatCard label="Confiance" value={`${Math.round(change.confidence * 100)}%`} />
+            <StatCard label="Observations" value={change.sourceObservationIds.length} />
+          </div>
+          <div className="mt-4 grid gap-3 md:grid-cols-2">
+            <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <h3 className="text-sm font-semibold text-white">Etat anterieur propose</h3>
+              <p className="mt-2 text-sm leading-6 text-stone-300">{change.proposedPreviousState?.summary ?? "Donnees insuffisantes"}</p>
+            </div>
+            <div className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <h3 className="text-sm font-semibold text-white">Etat actuel propose</h3>
+              <p className="mt-2 text-sm leading-6 text-stone-300">{change.proposedCurrentState?.summary ?? "Donnees insuffisantes"}</p>
+            </div>
+          </div>
+          <div className="mt-4 grid gap-2">
+            {change.changesDetected.map((item) => (
+              <div key={item.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm leading-6 text-stone-200">
+                <span className="text-goldSoft">{item.dimension}</span> - {item.summary}
+              </div>
+            ))}
+          </div>
+          <TagBlock title="Limites" items={change.limitations} />
+          <TagBlock title="Questions" items={change.questions} />
+          <div className="mt-4 grid gap-2">
+            {change.sourceExcerpts.map((source) => (
+              <div key={`${change.id}-${source.observationId}`} className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-xs leading-5 text-stone-400">
+                {source.observationId} : {source.excerpt}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ))}
     </div>
   );
 }
