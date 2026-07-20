@@ -53,8 +53,9 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       },
       updated_at: now
     };
+    const remoteStudyIds = new Map(migrated.studies.map((study) => [study.id, ownerScopedId(ownerId, study.id)]));
     const studies = migrated.studies.map((study) => ({
-      id: study.id,
+      id: remoteStudyIds.get(study.id) ?? ownerScopedId(ownerId, study.id),
       owner_id: ownerId,
       title: study.title,
       subject: study.subject,
@@ -65,9 +66,9 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
     }));
     const observations = migrated.studies.flatMap((study) =>
       (study.observations ?? []).map((record) => ({
-        id: record.id,
+        id: ownerScopedId(ownerId, record.id),
         owner_id: ownerId,
-        study_id: study.id,
+        study_id: remoteStudyIds.get(study.id) ?? ownerScopedId(ownerId, study.id),
         status: record.status,
         created_at: record.createdAt,
         updated_at: record.updatedAt,
@@ -77,7 +78,7 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       }))
     );
     const drafts = (migrated.observationDrafts ?? []).map((draft) => ({
-      id: draft.id,
+      id: ownerScopedId(ownerId, draft.id),
       owner_id: ownerId,
       status: draft.status,
       created_at: draft.createdAt,
@@ -86,7 +87,7 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       data: draft
     }));
     const aiResults = (migrated.aiObservationResults ?? []).map((result) => ({
-      id: result.id,
+      id: ownerScopedId(ownerId, result.id),
       owner_id: ownerId,
       provider: result.provider,
       model: result.model,
@@ -107,6 +108,10 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
     results.forEach((result) => throwIfError(result.error));
     return migrated;
   }
+}
+
+function ownerScopedId(ownerId: string, id: string) {
+  return `${ownerId}:${id}`;
 }
 
 function throwIfError(error: unknown) {
