@@ -12,6 +12,8 @@ export type AppView =
   | "reflexivity-engine"
   | "map"
   | "emotions"
+  | "attitudes-representations"
+  | "multidimensional-changes"
   | "catalysts"
   | "recognitions"
   | "timeline"
@@ -56,6 +58,7 @@ export type TransitionStage =
 
 export interface Study {
   id: string;
+  ownerId?: string;
   title: string;
   description: string;
   subject: string;
@@ -79,6 +82,7 @@ export interface Study {
   relationProposals?: PersistentRelationProposal[];
   deltaScores?: PersistentDeltaScore[];
   longitudinalComparisons?: LongitudinalObservationComparison[];
+  multidimensionalChanges?: MultidimensionalChange[];
   createdAt: string;
   updatedAt: string;
 }
@@ -294,6 +298,9 @@ export interface ReflexiveRelationMetadata {
 export interface ObservatoryData {
   version: 1;
   schemaVersion?: 2 | 3 | 4;
+  ownerId?: string;
+  createdAt?: string;
+  updatedAt?: string;
   studies: Study[];
   observationDrafts?: ObservationAnalysisDraft[];
   aiSettings?: ObservationAISettings;
@@ -448,6 +455,8 @@ export type ObservationAICollectionKey =
   | "objects"
   | "concepts"
   | "emotions"
+  | "attitudes"
+  | "representations"
   | "emotionScope"
   | "behaviours"
   | "decisions"
@@ -518,6 +527,7 @@ export interface ValidationHistoryEntry {
 
 export interface ObservationRecord {
   id: string;
+  ownerId?: string;
   studyId: string;
   rawText: string;
   createdAt: string;
@@ -530,6 +540,7 @@ export interface ObservationRecord {
   detectedCatalysts: DetectedCatalyst[];
   detectedConcepts: DetectedConcept[];
   detectedRelations: ObservationRelationProposal[];
+  detectedDimensions?: CanonicalObservationElement[];
   acceptedProposalIds: string[];
   editedProposalIds: string[];
   rejectedProposalIds: string[];
@@ -563,6 +574,90 @@ export interface ObservationRecord {
   reflexiveCycleStepIds?: ReflexiveCycleStep[];
   reciprocalTestimonyIds?: string[];
   sufferingObservation?: SufferingObservation;
+}
+
+export type AnalysisScope =
+  | { mode: "selected-study"; studyId: string }
+  | { mode: "all-studies" };
+
+export type CanonicalDimension =
+  | "Emotion"
+  | "Attitude"
+  | "Representation"
+  | "Behaviour"
+  | "Relation"
+  | "Concept"
+  | "LanguageMarker"
+  | "Manifestation"
+  | "Decision"
+  | "Transmission"
+  | "Metadata";
+
+export type DimensionPolarity = "negative" | "neutral" | "positive" | "positive-extreme" | "sacralizing" | "uncertain";
+
+export interface CanonicalObservationElement {
+  id: string;
+  observationId: string;
+  studyId: string;
+  category: CanonicalDimension;
+  label: string;
+  subtype?: string;
+  polarity: DimensionPolarity;
+  object?: string;
+  actors: string[];
+  temporalMarker?: string;
+  intensity?: number | null;
+  sourceExcerpt: string;
+  confidence: number;
+  status: "proposed" | "accepted" | "edited" | "rejected";
+  provenance: Array<"local-parser" | "ai" | "user">;
+  reason: string;
+}
+
+export type MultidimensionalChangeKind =
+  | "polarity-inversion"
+  | "representation-shift"
+  | "relation-shift"
+  | "language-shift"
+  | "amplification"
+  | "diminution"
+  | "reformulation"
+  | "contradiction"
+  | "insufficient-data";
+
+export interface MultidimensionalChange {
+  id: string;
+  studyId: string;
+  scope: AnalysisScope;
+  dimensionsCommon: CanonicalDimension[];
+  proposedPreviousState: {
+    summary: string;
+    elements: CanonicalObservationElement[];
+  } | null;
+  proposedCurrentState: {
+    summary: string;
+    elements: CanonicalObservationElement[];
+  } | null;
+  changesDetected: Array<{
+    id: string;
+    kind: MultidimensionalChangeKind;
+    dimension: CanonicalDimension;
+    before?: string;
+    after?: string;
+    summary: string;
+    confidence: number;
+  }>;
+  insufficientData: string[];
+  limitations: string[];
+  questions: string[];
+  sourceObservationIds: string[];
+  sourceExcerpts: Array<{ observationId: string; excerpt: string }>;
+  confidence: number;
+  status: "proposed" | "edited" | "validated" | "rejected";
+  engine: "MultidimensionalChangeEngine";
+  engineVersion: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface OpenQuestion {

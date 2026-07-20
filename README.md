@@ -1,8 +1,8 @@
 # Observatoire de la Reconnaissance
 
-Application web locale pour observer des transformations de compréhension selon la Théorie de la Réflexivité.
+Application web pour observer des transformations de comprehension selon la Theorie de la Reflexivite.
 
-L'application ne détermine pas la vérité d'une interprétation. Elle documente un chemin observable Delta : manifestations, relations, émotions, catalyseurs, reconnaissances, transformations, temporalité et confirmation.
+L'application ne determine pas la verite d'une interpretation. Elle documente un chemin observable Delta : manifestations, relations, emotions, attitudes, representations, catalyseurs, reconnaissances, transformations, temporalite et confirmation.
 
 ## Stack technique
 
@@ -13,7 +13,8 @@ L'application ne détermine pas la vérité d'une interprétation. Elle document
 - React Flow (`@xyflow/react`)
 - Recharts
 - Lucide React
-- Persistance navigateur avec `localStorage`
+- Supabase PostgreSQL/Auth/Storage
+- Cache navigateur avec `localStorage`
 
 ## Installation
 
@@ -21,49 +22,51 @@ L'application ne détermine pas la vérité d'une interprétation. Elle document
 npm install
 ```
 
+## Configuration
+
+Copier `.env.example` puis renseigner :
+
+- `NEXT_PUBLIC_SUPABASE_URL`
+- `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `SUPABASE_SERVICE_ROLE_KEY` cote serveur uniquement si une operation sensible l'exige
+- `OPENAI_API_KEY` cote serveur pour l'analyse IA assistee
+
 ## Lancement local
 
 ```bash
 npm run dev
 ```
 
-## Qualité et build
+## Qualite et build
 
 ```bash
 npm run lint
 npm run typecheck
+npm run test:run
 npm run build
 ```
 
 ## Architecture principale
 
 - `src/app` : shell applicatif Next.js et page principale.
-- `src/components` : carte réflexive, graphiques et composants UI locaux.
-- `src/lib/types.ts` : modèle de données TypeScript.
-- `src/lib/demo-data.ts` : étude fictive de démonstration.
-- `src/lib/repository.ts` : chargement, sauvegarde et réinitialisation via `localStorage`.
-- `src/lib/analytics.ts` : indicateurs, exports JSON, chronologie et comparaisons locales.
-- `docs/` : documentation d'audit, modèle et roadmap.
-- `design-system/` : notes de direction d'interface existante.
+- `src/components` : carte reflexive, graphiques et composants UI locaux.
+- `src/lib/types.ts` : modele de donnees TypeScript.
+- `src/lib/repository.ts` et `src/lib/repositories/*` : abstraction repository, cache local, Supabase et synchronisation.
+- `src/lib/engines/MultidimensionalChangeEngine.ts` : comparaison multidimensionnelle prudente.
+- `supabase/migrations/` : schema PostgreSQL, index, RLS et Storage prive.
+- `docs/` : stockage, schema, securite, portee d'analyse et guide utilisateur.
 
-## Fonctionnement général
+## Persistance des donnees
 
-L'interface propose un tableau de bord, une liste d'études, des états de compréhension, des transitions Delta, une carte réflexive, des observations émotionnelles, des catalyseurs, des reconnaissances, une chronologie et une vue d'analyse.
-
-Les données de démonstration sont préchargées au premier lancement. L'utilisateur peut créer, modifier, dupliquer, supprimer et exporter des études, importer un fichier JSON, réinitialiser la démonstration et modifier la carte réflexive.
-
-## Persistance des données
-
-Les données restent dans le navigateur avec la clé `observatoire-reconnaissance:v1`. Aucun backend, aucune base de données distante et aucune API externe ne sont utilisés dans la version actuelle.
+Supabase PostgreSQL est la source de verite distante lorsqu'un utilisateur est connecte. `localStorage` avec la cle `observatoire-reconnaissance:v1` reste un cache local, un brouillon hors ligne et une file de reprise de synchronisation.
 
 ## Limites actuelles
 
-- Les données sont locales au navigateur.
-- Il n'existe pas encore d'authentification ni de collaboration multi-utilisateur.
-- Les exports PDF et CSV ne sont pas présents.
-- L'historique détaillé des modifications reste limité.
-- Les analyses sont des calculs locaux et prudents, pas des confirmations scientifiques automatiques.
+- La collaboration multi-utilisateur est preparee dans le schema mais pas encore exposee dans l'interface.
+- Les exports PDF et CSV ne sont pas presents.
+- Les migrations Supabase doivent etre appliquees dans le projet Supabase cible avant production.
+- Les analyses sont des calculs prudents et des propositions, pas des confirmations scientifiques automatiques.
 
-## Avertissement méthodologique
+## Avertissement methodologique
 
-L'application observe des transformations de compréhension et ne prétend pas déterminer la Vérité.
+L'application observe des transformations de comprehension et ne pretend pas determiner la Verite.

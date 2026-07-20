@@ -1,6 +1,7 @@
 import { historyEntry, persistentDeltaFromScore } from "./data-migration";
 import { DeltaEngine } from "./engines/DeltaEngine";
 import { LongitudinalObservationEngine } from "./engines/LongitudinalObservationEngine";
+import { MultidimensionalChangeEngine } from "./engines/MultidimensionalChangeEngine";
 import { StateDifferenceEngine } from "./engines/StateDifferenceEngine";
 import { stableId } from "./parser/ObservationParser";
 import type {
@@ -224,6 +225,7 @@ export function reanalyzeLongitudinalComparisons(
   const nextStudy: Study = {
     ...study,
     longitudinalComparisons: nextComparisons,
+    multidimensionalChanges: MultidimensionalChangeEngine.compareStudy(study, { mode: "selected-study", studyId: study.id }, now),
     observations: (study.observations ?? []).map((observation) => ({
       ...observation,
       generatedLongitudinalComparisonIds: [...new Set(nextComparisonIdsByObservation.get(observation.id) ?? observation.generatedLongitudinalComparisonIds ?? [])],

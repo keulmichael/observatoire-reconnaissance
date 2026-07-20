@@ -213,6 +213,8 @@ function baseMerged(createdAt: string): MergedObservationAnalysis {
     objects: [],
     concepts: [],
     emotions: [],
+    attitudes: [],
+    representations: [],
     emotionScope: [],
     behaviours: [],
     decisions: [],

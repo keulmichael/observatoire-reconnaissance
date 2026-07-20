@@ -10,13 +10,18 @@ import type {
 } from "./types";
 import { defaultAISettings } from "./ai/ObservationAI";
 import { createInitialTheories } from "./engines/TheoryEngine";
+import { extractCanonicalDimensions } from "./parser/DimensionExtractor";
 
 export const CURRENT_SCHEMA_VERSION = 4 as const;
 
 export function migrateObservatoryData(input: ObservatoryData): ObservatoryData {
+  const now = new Date().toISOString();
   return {
     ...input,
     schemaVersion: CURRENT_SCHEMA_VERSION,
+    ownerId: input.ownerId,
+    createdAt: input.createdAt ?? now,
+    updatedAt: input.updatedAt ?? now,
     studies: input.studies.map(normalizeStudy),
     observationDrafts: input.observationDrafts ?? [],
     aiSettings: { ...defaultAISettings, ...(input.aiSettings ?? {}) },
@@ -32,12 +37,17 @@ export function migrateObservatoryData(input: ObservatoryData): ObservatoryData 
 export function normalizeStudy(study: Study): Study {
   return {
     ...study,
-    observations: study.observations ?? [],
     openQuestions: study.openQuestions ?? [],
     structuredHistory: study.structuredHistory ?? legacyHistory(study),
     relationProposals: study.relationProposals ?? [],
     deltaScores: study.deltaScores ?? [],
-    longitudinalComparisons: (study.longitudinalComparisons ?? []).map((comparison) => normalizeLongitudinalComparison(comparison, study.id))
+    observations: (study.observations ?? []).map((record) => ({
+      ...record,
+      ownerId: record.ownerId ?? study.ownerId,
+      detectedDimensions: record.detectedDimensions?.length ? record.detectedDimensions : extractCanonicalDimensions(record)
+    })),
+    longitudinalComparisons: (study.longitudinalComparisons ?? []).map((comparison) => normalizeLongitudinalComparison(comparison, study.id)),
+    multidimensionalChanges: study.multidimensionalChanges ?? []
   };
 }
 
@@ -128,7 +138,7 @@ export function recordFromDraft(
     createdAt: now
   }));
 
-  return {
+  const record: ObservationRecord = {
     id: draft.id,
     studyId,
     rawText: draft.rawText,
@@ -141,6 +151,7 @@ export function recordFromDraft(
     detectedCatalysts: draft.detectedCatalysts,
     detectedConcepts: draft.detectedConcepts,
     detectedRelations: draft.relationProposals,
+    detectedDimensions: [],
     acceptedProposalIds,
     editedProposalIds,
     rejectedProposalIds,
@@ -192,6 +203,10 @@ export function recordFromDraft(
     aiLatency: draft.aiLatency,
     aiModel: draft.aiModel,
     aiAnalyzedAt: draft.aiAnalyzedAt
+  };
+  return {
+    ...record,
+    detectedDimensions: extractCanonicalDimensions(record)
   };
 }
 

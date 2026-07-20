@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { repository } from "./repository";
 import type { ObservationAnalysisDraft, ObservatoryData, Study, TheoryEvidenceRelation, TheoryPrediction, TheoryRevisionProposal } from "./types";
@@ -9,27 +9,68 @@ import { addObservationToStudy, constructScientificStudy } from "./parser/Scient
 import { migrateObservatoryData, normalizeStudy } from "./data-migration";
 import { formatStudyDeletionConfirmation } from "./study-deletion";
 import { buildTheoryEvidenceLink, TheoryEngine } from "./engines/TheoryEngine";
+import type { SyncStatus } from "./repositories/SyncService";
 
 export function useObservatory() {
   const [data, setData] = useState<ObservatoryData>({ version: 1, studies: [], observationDrafts: [] });
   const [selectedStudyId, setSelectedStudyId] = useState<string | null>(null);
   const [isDeletingStudy, setIsDeletingStudy] = useState(false);
   const [studyNotice, setStudyNotice] = useState("");
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>("local-cache");
+  const [syncError, setSyncError] = useState("");
+  const [authUserId, setAuthUserId] = useState<string | null>(null);
+  const [authEmail, setAuthEmail] = useState<string | null>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const didLoad = useRef(false);
 
   useEffect(() => {
-    const loaded = repository.load();
-    setData(loaded);
-    setSelectedStudyId(loaded.studies[0]?.id ?? null);
+    let cancelled = false;
+    async function load() {
+      const local = repository.loadLocal();
+      setData(local);
+      setSelectedStudyId((current) => current ?? local.studies[0]?.id ?? null);
+      const session = await repository.session();
+      if (cancelled) return;
+      setAuthUserId(session.user?.id ?? null);
+      setAuthEmail(session.user?.email ?? null);
+      const snapshot = await repository.load();
+      if (cancelled) return;
+      setData(snapshot.data);
+      setSyncStatus(snapshot.status);
+      setSyncError(snapshot.error ?? "");
+      setSelectedStudyId((current) => current ?? snapshot.data.studies[0]?.id ?? null);
+      didLoad.current = true;
+    }
+    void load();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   useEffect(() => {
-    repository.save(data);
+    if (!didLoad.current) return;
+    repository.localCache.save(data);
+    if (saveTimer.current) clearTimeout(saveTimer.current);
+    setSyncStatus((current) => (current === "local-cache" ? current : "syncing"));
+    saveTimer.current = setTimeout(() => {
+      void repository.save(data).then((snapshot) => {
+        setSyncStatus(snapshot.status);
+        setSyncError(snapshot.error ?? "");
+      });
+    }, 250);
   }, [data]);
 
   const selectedStudy = useMemo(
-    () => data.studies.find((study) => study.id === selectedStudyId) ?? data.studies[0],
+    () => (selectedStudyId ? data.studies.find((study) => study.id === selectedStudyId) : undefined),
     [data.studies, selectedStudyId]
   );
+
+  const persistNow = useCallback(async (nextData: ObservatoryData) => {
+    const snapshot = await repository.save(nextData);
+    setSyncStatus(snapshot.status);
+    setSyncError("");
+    return snapshot;
+  }, []);
 
   function updateStudy(study: Study) {
     setData((current) => ({
@@ -44,6 +85,7 @@ export function useObservatory() {
     const createdAt = new Date().toISOString();
     const study: Study = {
       id: `study-${crypto.randomUUID()}`,
+      ownerId: authUserId ?? undefined,
       title: "Nouvelle étude d'observation",
       description: "Décrire le parcours d'observation.",
       subject: "Sujet à documenter",
@@ -244,6 +286,11 @@ export function useObservatory() {
     const result = targetStudy
       ? addObservationToStudy(validatedDraft, targetStudy, data.studies)
       : constructScientificStudy(validatedDraft);
+    const resultStudy = {
+      ...result.study,
+      ownerId: result.study.ownerId ?? authUserId ?? undefined,
+      observations: (result.study.observations ?? []).map((record) => ({ ...record, ownerId: record.ownerId ?? authUserId ?? undefined }))
+    };
     setData((current) => {
       const drafts = current.observationDrafts ?? [];
       const target = current.studies.find((study) => study.id === targetStudyId);
@@ -251,12 +298,48 @@ export function useObservatory() {
         ...current,
         observationDrafts: drafts.map((item) => (item.id === draft.id ? validatedDraft : item)),
         studies: target
-          ? current.studies.map((study) => (study.id === target.id ? result.study : study))
-          : [result.study, ...current.studies]
+          ? current.studies.map((study) => (study.id === target.id ? resultStudy : study))
+          : [resultStudy, ...current.studies]
       };
     });
-    setSelectedStudyId(result.study.id);
-    return result;
+    setSelectedStudyId(resultStudy.id);
+    return { ...result, study: resultStudy };
+  }
+
+  async function signIn(email: string, password: string) {
+    const result = await repository.signIn(email, password);
+    if (result.error) throw result.error;
+    const session = await repository.session();
+    setAuthUserId(session.user?.id ?? null);
+    setAuthEmail(session.user?.email ?? null);
+    const snapshot = await repository.load();
+    setData(snapshot.data);
+    setSyncStatus(snapshot.status);
+    setSyncError(snapshot.error ?? "");
+  }
+
+  async function signUp(email: string, password: string) {
+    const result = await repository.signUp(email, password);
+    if (result.error) throw result.error;
+    const session = await repository.session();
+    setAuthUserId(session.user?.id ?? null);
+    setAuthEmail(session.user?.email ?? email);
+  }
+
+  async function signOut() {
+    await repository.signOut();
+    setAuthUserId(null);
+    setAuthEmail(null);
+    setSyncStatus("local-cache");
+  }
+
+  async function migrateLocalToRemote() {
+    if (!authUserId) throw new Error("Connexion requise avant migration.");
+    const snapshot = await repository.migrateLocalToRemote(authUserId);
+    setData(snapshot.data);
+    setSyncStatus(snapshot.status);
+    setSyncError("");
+    return snapshot;
   }
 
   return {
@@ -286,6 +369,17 @@ export function useObservatory() {
     createTheoryPrediction,
     linkPredictionObservation,
     saveObservationDraft,
-    integrateObservationDraft
+    integrateObservationDraft,
+    authUserId,
+    authEmail,
+    authConfigured: repository.configured,
+    syncStatus,
+    syncError,
+    signIn,
+    signUp,
+    signOut,
+    migrationSummary: repository.migrationSummary,
+    migrateLocalToRemote,
+    persistNow
   };
 }
