@@ -113,6 +113,8 @@ begin
   end loop;
 end $$;
 
+drop policy if exists "profiles own read" on public.profiles;
+drop policy if exists "profiles own write" on public.profiles;
 create policy "profiles own read" on public.profiles for select using (id = auth.uid());
 create policy "profiles own write" on public.profiles for all using (id = auth.uid()) with check (id = auth.uid());
 
@@ -126,16 +128,23 @@ begin
     'timeline_events','open_questions','longitudinal_changes','history_entries','theory_elements','theory_evidence_links',
     'study_shares'
   ] loop
-    execute format('create policy %L on public.%I for select using (owner_id = auth.uid())', table_name || ' own read', table_name);
-    execute format('create policy %L on public.%I for insert with check (owner_id = auth.uid())', table_name || ' own insert', table_name);
-    execute format('create policy %L on public.%I for update using (owner_id = auth.uid()) with check (owner_id = auth.uid())', table_name || ' own update', table_name);
-    execute format('create policy %L on public.%I for delete using (owner_id = auth.uid())', table_name || ' own delete', table_name);
+    execute format('drop policy if exists %I on public.%I', table_name || ' own read', table_name);
+    execute format('drop policy if exists %I on public.%I', table_name || ' own insert', table_name);
+    execute format('drop policy if exists %I on public.%I', table_name || ' own update', table_name);
+    execute format('drop policy if exists %I on public.%I', table_name || ' own delete', table_name);
+    execute format('create policy %I on public.%I for select using (owner_id = auth.uid())', table_name || ' own read', table_name);
+    execute format('create policy %I on public.%I for insert with check (owner_id = auth.uid())', table_name || ' own insert', table_name);
+    execute format('create policy %I on public.%I for update using (owner_id = auth.uid()) with check (owner_id = auth.uid())', table_name || ' own update', table_name);
+    execute format('create policy %I on public.%I for delete using (owner_id = auth.uid())', table_name || ' own delete', table_name);
   end loop;
 end $$;
 
 insert into storage.buckets (id, name, public)
 values ('observatory-attachments', 'observatory-attachments', false)
 on conflict (id) do nothing;
+
+drop policy if exists "attachments owner read" on storage.objects;
+drop policy if exists "attachments owner write" on storage.objects;
 
 create policy "attachments owner read" on storage.objects
 for select using (bucket_id = 'observatory-attachments' and owner = auth.uid());
