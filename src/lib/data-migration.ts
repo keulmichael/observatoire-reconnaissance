@@ -47,7 +47,9 @@ export function normalizeStudy(study: Study): Study {
       detectedDimensions: record.detectedDimensions?.length ? record.detectedDimensions : extractCanonicalDimensions(record)
     })),
     longitudinalComparisons: (study.longitudinalComparisons ?? []).map((comparison) => normalizeLongitudinalComparison(comparison, study.id)),
-    multidimensionalChanges: study.multidimensionalChanges ?? []
+    multidimensionalChanges: study.multidimensionalChanges ?? [],
+    studySyntheses: study.studySyntheses ?? [],
+    activeStudySynthesisId: study.activeStudySynthesisId ?? study.studySyntheses?.[0]?.id
   };
 }
 

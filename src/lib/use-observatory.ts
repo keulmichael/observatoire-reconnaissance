@@ -9,6 +9,7 @@ import { addObservationToStudy, constructScientificStudy } from "./parser/Scient
 import { migrateObservatoryData, normalizeStudy } from "./data-migration";
 import { formatStudyDeletionConfirmation } from "./study-deletion";
 import { buildTheoryEvidenceLink, TheoryEngine } from "./engines/TheoryEngine";
+import { StudySynthesisEngine } from "./engines/study-synthesis";
 import type { SyncStatus } from "./repositories/SyncService";
 
 export function useObservatory() {
@@ -280,6 +281,26 @@ export function useObservatory() {
     setData((current) => TheoryEngine.linkFutureObservationToPrediction(current, predictionId, observationId));
   }
 
+  function generateStudySynthesis(studyId: string) {
+    const engine = new StudySynthesisEngine();
+    let generatedId = "";
+    setData((current) => ({
+      ...current,
+      studies: current.studies.map((study) => {
+        if (study.id !== studyId) return study;
+        const synthesis = engine.generate(study);
+        generatedId = synthesis.id;
+        return {
+          ...study,
+          studySyntheses: [synthesis, ...(study.studySyntheses ?? [])],
+          activeStudySynthesisId: synthesis.id,
+          updatedAt: new Date().toISOString()
+        };
+      })
+    }));
+    return generatedId;
+  }
+
   function integrateObservationDraft(draft: ObservationAnalysisDraft, targetStudyId: string | "new" = "new") {
     const validatedDraft: ObservationAnalysisDraft = { ...draft, status: "validated" };
     const targetStudy = data.studies.find((study) => study.id === targetStudyId);
@@ -368,6 +389,7 @@ export function useObservatory() {
     setTheoryProposalStatus,
     createTheoryPrediction,
     linkPredictionObservation,
+    generateStudySynthesis,
     saveObservationDraft,
     integrateObservationDraft,
     authUserId,
