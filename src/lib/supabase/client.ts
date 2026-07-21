@@ -25,3 +25,19 @@ export function createSupabaseBrowserClient(): SupabaseClient {
   });
   return browserClient;
 }
+
+export function createSupabaseServiceClient(): SupabaseClient {
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !serviceRoleKey) {
+    return createClient("https://supabase.invalid", "missing-service-role-key", {
+      auth: { persistSession: false, autoRefreshToken: false }
+    });
+  }
+  return createClient(url, serviceRoleKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false
+    }
+  });
+}

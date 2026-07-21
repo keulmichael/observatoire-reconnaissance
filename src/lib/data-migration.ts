@@ -10,9 +10,10 @@ import type {
 } from "./types";
 import { defaultAISettings } from "./ai/ObservationAI";
 import { createInitialTheories } from "./engines/TheoryEngine";
+import { GlobalObservatory } from "./global-observatory";
 import { extractCanonicalDimensions } from "./parser/DimensionExtractor";
 
-export const CURRENT_SCHEMA_VERSION = 4 as const;
+export const CURRENT_SCHEMA_VERSION = 5 as const;
 
 export function migrateObservatoryData(input: ObservatoryData): ObservatoryData {
   const now = new Date().toISOString();
@@ -30,7 +31,12 @@ export function migrateObservatoryData(input: ObservatoryData): ObservatoryData 
     theoryRevisionProposals: input.theoryRevisionProposals ?? [],
     theoryPredictions: input.theoryPredictions ?? [],
     reciprocalTestimonies: input.reciprocalTestimonies ?? [],
-    reflexiveSignatures: input.reflexiveSignatures ?? []
+    reflexiveSignatures: input.reflexiveSignatures ?? [],
+    globalObservatory: GlobalObservatory.refresh({
+      ...GlobalObservatory.initialState(now),
+      ...(input.globalObservatory ?? {}),
+      collectionLogs: input.globalObservatory?.collectionLogs ?? []
+    })
   };
 }
 
