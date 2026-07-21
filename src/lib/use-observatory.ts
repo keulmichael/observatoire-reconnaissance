@@ -39,7 +39,7 @@ export function useObservatory() {
       if (cancelled) return;
       setData(snapshot.data);
       setSyncStatus(snapshot.status);
-      setSyncError(snapshot.error ?? "");
+      setSyncError(snapshot.error ?? snapshot.warning ?? "");
       setSelectedStudyId((current) => current ?? snapshot.data.studies[0]?.id ?? null);
       didLoad.current = true;
     }
@@ -57,7 +57,7 @@ export function useObservatory() {
     saveTimer.current = setTimeout(() => {
       void repository.save(data).then((snapshot) => {
         setSyncStatus(snapshot.status);
-        setSyncError(snapshot.error ?? "");
+        setSyncError(snapshot.error ?? snapshot.warning ?? "");
       });
     }, 250);
   }, [data]);
@@ -70,7 +70,7 @@ export function useObservatory() {
   const persistNow = useCallback(async (nextData: ObservatoryData) => {
     const snapshot = await repository.save(nextData);
     setSyncStatus(snapshot.status);
-    setSyncError("");
+    setSyncError(snapshot.error ?? snapshot.warning ?? "");
     return snapshot;
   }, []);
 
@@ -431,7 +431,7 @@ export function useObservatory() {
     const snapshot = await repository.load();
     setData(snapshot.data);
     setSyncStatus(snapshot.status);
-    setSyncError(snapshot.error ?? "");
+    setSyncError(snapshot.error ?? snapshot.warning ?? "");
   }
 
   async function signUp(email: string, password: string) {
@@ -454,7 +454,7 @@ export function useObservatory() {
     const snapshot = await repository.migrateLocalToRemote(authUserId);
     setData(snapshot.data);
     setSyncStatus(snapshot.status);
-    setSyncError("");
+    setSyncError(snapshot.error ?? snapshot.warning ?? "");
     return snapshot;
   }
 

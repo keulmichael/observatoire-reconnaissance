@@ -17,42 +17,159 @@ import type { ObservatoryRepository, RepositoryPage } from "./ObservatoryReposit
 type DataRow<T> = { id: string; data: T; updated_at?: string };
 
 export class SupabaseObservatoryRepository implements ObservatoryRepository {
+  private warnings: string[] = [];
+
   constructor(private readonly client: SupabaseClient) {}
 
   async load(ownerId: string, page: RepositoryPage = {}): Promise<ObservatoryData> {
+    this.warnings = [];
     const limit = page.limit ?? 50;
     const offset = page.offset ?? 0;
-    const [studiesResult, draftsResult, aiResult, profileResult, globalSourcesResult, globalEventsResult, globalLearningResult, globalLogsResult] = await Promise.all([
+    const [studiesResult, draftsResult, aiResult, profileResult] = await Promise.all([
       this.client.from("studies").select("id,data,updated_at").eq("owner_id", ownerId).order("updated_at", { ascending: false }).range(offset, offset + limit - 1),
       this.client.from("observation_drafts").select("id,data,updated_at").eq("owner_id", ownerId).order("updated_at", { ascending: false }).limit(200),
       this.client.from("ai_observation_results").select("id,data,updated_at").eq("owner_id", ownerId).order("updated_at", { ascending: false }).limit(50),
-      this.client.from("observatory_profiles").select("data").eq("owner_id", ownerId).maybeSingle(),
+      this.client.from("observatory_profiles").select("data").eq("owner_id", ownerId).maybeSingle()
+    ]);
+    throwIfError(studiesResult.error, "etudes");
+    throwIfError(draftsResult.error, "observations");
+    throwIfError(aiResult.error, "analyses");
+    throwIfError(profileResult.error, "profil");
+
+    const base = ((profileResult.data as { data?: Partial<ObservatoryData> } | null)?.data ?? {}) as Partial<ObservatoryData>;
+    const core = {
+      version: 1 as const,
+      ...base,
+      ownerId,
+      studies: uniqueBy(((studiesResult.data ?? []) as Array<DataRow<Study>>).map((row) => row.data), (study) => study.id),
+      observationDrafts: uniqueBy(((draftsResult.data ?? []) as Array<DataRow<ObservationAnalysisDraft>>).map((row) => row.data), (draft) => draft.id),
+      aiObservationResults: uniqueBy(((aiResult.data ?? []) as Array<DataRow<AIObservationResult>>).map((row) => row.data), (result) => result.id)
+    };
+    try {
+      return migrateObservatoryData({ ...core, globalObservatory: await this.loadGlobalObservatory(ownerId, base.globalObservatory) });
+    } catch (error) {
+      this.warnings = [`Veille mondiale non chargee: ${message(error)}`];
+      return migrateObservatoryData(core);
+    }
+  }
+
+  getWarnings() {
+    return this.warnings;
+  }
+
+  async save(data: ObservatoryData, ownerId: string): Promise<ObservatoryData> {
+    const saved = await this.saveCoreObservatory(data, ownerId);
+    await this.saveGlobalObservatory(saved, ownerId);
+    return saved;
+  }
+
+  async saveCoreObservatory(data: ObservatoryData, ownerId: string): Promise<ObservatoryData> {
+    const migrated = normalizeRepositoryData(data, ownerId);
+    const now = new Date().toISOString();
+    const profile = {
+      owner_id: ownerId,
+      data: {
+        version: migrated.version,
+        schemaVersion: migrated.schemaVersion,
+        ownerId,
+        createdAt: migrated.createdAt ?? now,
+        updatedAt: now,
+        aiSettings: migrated.aiSettings,
+        theories: migrated.theories ?? [],
+        theoryRevisionProposals: migrated.theoryRevisionProposals ?? [],
+        theoryPredictions: migrated.theoryPredictions ?? [],
+        reciprocalTestimonies: migrated.reciprocalTestimonies ?? [],
+        reflexiveSignatures: migrated.reflexiveSignatures ?? []
+      },
+      updated_at: now
+    };
+    const remoteStudyIds = new Map(migrated.studies.map((study) => [study.id, ownerScopedId(ownerId, study.id)]));
+    const studies = migrated.studies.map((study) => ({
+      id: remoteStudyIds.get(study.id) ?? ownerScopedId(ownerId, study.id),
+      owner_id: ownerId,
+      title: study.title,
+      subject: study.subject,
+      status: study.status,
+      created_at: study.createdAt,
+      updated_at: study.updatedAt ?? now,
+      data: { ...study, ownerId }
+    }));
+    const observations = migrated.studies.flatMap((study) =>
+      (study.observations ?? []).map((record) => ({
+        id: ownerScopedId(ownerId, `${study.id}:${record.id}`),
+        owner_id: ownerId,
+        study_id: remoteStudyIds.get(study.id) ?? ownerScopedId(ownerId, study.id),
+        status: record.status,
+        created_at: record.createdAt,
+        updated_at: record.updatedAt,
+        observed_at: record.createdAt,
+        raw_text: record.rawText,
+        data: { ...record, ownerId, studyId: study.id }
+      }))
+    );
+    const drafts = (migrated.observationDrafts ?? []).map((draft) => ({
+      id: ownerScopedId(ownerId, draft.id),
+      owner_id: ownerId,
+      status: draft.status,
+      created_at: draft.createdAt,
+      updated_at: now,
+      raw_text: draft.rawText,
+      data: draft
+    }));
+    const aiResults = (migrated.aiObservationResults ?? []).map((result) => ({
+      id: ownerScopedId(ownerId, result.id),
+      owner_id: ownerId,
+      provider: result.provider,
+      model: result.model,
+      status: result.status,
+      created_at: result.createdAt,
+      updated_at: now,
+      data: result
+    }));
+    await upsertOrSkip(this.client, "observatory_profiles", profile, "owner_id");
+    await upsertOrSkip(this.client, "studies", studies, "id");
+    await upsertOrSkip(this.client, "observation_records", observations, "id");
+    await upsertOrSkip(this.client, "observation_drafts", drafts, "id");
+    await upsertOrSkip(this.client, "ai_observation_results", aiResults, "id");
+    return migrated;
+  }
+
+  async saveGlobalObservatory(data: ObservatoryData, ownerId: string): Promise<void> {
+    const global = GlobalObservatory.refresh(data.globalObservatory ?? GlobalObservatory.initialState());
+    const rows = buildGlobalRows(global, ownerId);
+    await upsertOrSkip(this.client, "global_sources", rows.globalSources, "id");
+    await upsertOrSkip(this.client, "global_articles", rows.globalArticles, "id");
+    await upsertOrSkip(this.client, "global_events", rows.globalEvents, "id");
+    await upsertOrSkip(this.client, "global_event_articles", rows.globalEventArticles, "event_id,article_id");
+    await upsertOrSkip(this.client, "global_excerpts", rows.globalExcerpts, "id");
+    await upsertOrSkip(this.client, "global_claims", rows.globalClaims, "id");
+    await upsertOrSkip(this.client, "global_analyses", rows.globalAnalyses, "id");
+    await upsertOrSkip(this.client, "global_claim_sources", rows.globalClaimSources, "id");
+    await upsertOrSkip(this.client, "global_study_suggestions", rows.globalSuggestions, "id");
+    await upsertOrSkip(this.client, "global_learning_signals", rows.globalLearningSignals, "id");
+    await upsertOrSkip(this.client, "global_collection_logs", rows.globalCollectionLogs, "id");
+  }
+
+  private async loadGlobalObservatory(ownerId: string, fallback?: ObservatoryData["globalObservatory"]) {
+    const [globalSourcesResult, globalEventsResult, globalLearningResult, globalLogsResult] = await Promise.all([
       this.client.from("global_sources").select("data").eq("owner_id", ownerId).limit(200),
       this.client.from("global_events").select("data").eq("owner_id", ownerId).order("updated_at", { ascending: false }).limit(300),
       this.client.from("global_learning_signals").select("data").eq("owner_id", ownerId).order("created_at", { ascending: false }).limit(300),
       this.client.from("global_collection_logs").select("data").eq("owner_id", ownerId).order("started_at", { ascending: false }).limit(100)
     ]);
-    throwIfError(studiesResult.error);
-    throwIfError(draftsResult.error);
-    throwIfError(aiResult.error);
-    throwIfError(profileResult.error);
-    throwIfError(globalSourcesResult.error);
-    throwIfError(globalEventsResult.error);
-    throwIfError(globalLearningResult.error);
-    throwIfError(globalLogsResult.error);
-
-    const base = ((profileResult.data as { data?: Partial<ObservatoryData> } | null)?.data ?? {}) as Partial<ObservatoryData>;
+    throwIfError(globalSourcesResult.error, "veille mondiale/global_sources");
+    throwIfError(globalEventsResult.error, "veille mondiale/global_events");
+    throwIfError(globalLearningResult.error, "veille mondiale/global_learning_signals");
+    throwIfError(globalLogsResult.error, "veille mondiale/global_collection_logs");
     const globalSources = ((globalSourcesResult.data ?? []) as Array<{ data: GlobalSourceConnector }>).map((row) => row.data);
     const globalEvents = ((globalEventsResult.data ?? []) as Array<{ data: GlobalObservedEvent }>).map((row) => row.data);
     const globalLearningSignals = ((globalLearningResult.data ?? []) as Array<{ data: GlobalLearningSignal }>).map((row) => row.data);
     const globalCollectionLogs = ((globalLogsResult.data ?? []) as Array<{ data: GlobalCollectionLog }>).map((row) => row.data);
+    if (!globalEvents.length && !globalSources.length) return fallback;
     return migrateObservatoryData({
       version: 1,
-      ...base,
       ownerId,
-      studies: uniqueBy(((studiesResult.data ?? []) as Array<DataRow<Study>>).map((row) => row.data), (study) => study.id),
-      observationDrafts: uniqueBy(((draftsResult.data ?? []) as Array<DataRow<ObservationAnalysisDraft>>).map((row) => row.data), (draft) => draft.id),
-      aiObservationResults: uniqueBy(((aiResult.data ?? []) as Array<DataRow<AIObservationResult>>).map((row) => row.data), (result) => result.id),
+      studies: [],
       globalObservatory: globalEvents.length || globalSources.length
         ? GlobalObservatory.refresh({
             sources: globalSources,
@@ -73,84 +190,14 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
             },
             lastCollectedAt: globalCollectionLogs[0]?.completedAt
           })
-        : base.globalObservatory
-    });
+        : fallback
+    }).globalObservatory;
   }
+}
 
-  async save(data: ObservatoryData, ownerId: string): Promise<ObservatoryData> {
-    const migrated = migrateObservatoryData({ ...data, ownerId });
-    const uniqueStudies = uniqueBy(migrated.studies, (study) => study.id);
-    const uniqueDrafts = uniqueBy(migrated.observationDrafts ?? [], (draft) => draft.id);
-    const uniqueAIResults = uniqueBy(migrated.aiObservationResults ?? [], (result) => result.id);
-    const normalizedData = {
-      ...migrated,
-      studies: uniqueStudies,
-      observationDrafts: uniqueDrafts,
-      aiObservationResults: uniqueAIResults
-    };
-    const now = new Date().toISOString();
-    const profile = {
-      owner_id: ownerId,
-      data: {
-        version: normalizedData.version,
-        schemaVersion: normalizedData.schemaVersion,
-        ownerId,
-        createdAt: normalizedData.createdAt ?? now,
-        updatedAt: now,
-        aiSettings: normalizedData.aiSettings,
-        theories: normalizedData.theories ?? [],
-        theoryRevisionProposals: normalizedData.theoryRevisionProposals ?? [],
-        theoryPredictions: normalizedData.theoryPredictions ?? [],
-        reciprocalTestimonies: normalizedData.reciprocalTestimonies ?? [],
-        reflexiveSignatures: normalizedData.reflexiveSignatures ?? []
-      },
-      updated_at: now
-    };
-    const global = GlobalObservatory.refresh(normalizedData.globalObservatory ?? GlobalObservatory.initialState(now));
-    const remoteStudyIds = new Map(uniqueStudies.map((study) => [study.id, ownerScopedId(ownerId, study.id)]));
-    const studies = uniqueStudies.map((study) => ({
-      id: remoteStudyIds.get(study.id) ?? ownerScopedId(ownerId, study.id),
-      owner_id: ownerId,
-      title: study.title,
-      subject: study.subject,
-      status: study.status,
-      created_at: study.createdAt,
-      updated_at: study.updatedAt ?? now,
-      data: { ...study, ownerId }
-    }));
-    const observations = uniqueStudies.flatMap((study) =>
-      (study.observations ?? []).map((record) => ({
-        id: ownerScopedId(ownerId, `${study.id}:${record.id}`),
-        owner_id: ownerId,
-        study_id: remoteStudyIds.get(study.id) ?? ownerScopedId(ownerId, study.id),
-        status: record.status,
-        created_at: record.createdAt,
-        updated_at: record.updatedAt,
-        observed_at: record.createdAt,
-        raw_text: record.rawText,
-        data: { ...record, ownerId, studyId: study.id }
-      }))
-    );
-    const drafts = uniqueDrafts.map((draft) => ({
-      id: ownerScopedId(ownerId, draft.id),
-      owner_id: ownerId,
-      status: draft.status,
-      created_at: draft.createdAt,
-      updated_at: now,
-      raw_text: draft.rawText,
-      data: draft
-    }));
-    const aiResults = uniqueAIResults.map((result) => ({
-      id: ownerScopedId(ownerId, result.id),
-      owner_id: ownerId,
-      provider: result.provider,
-      model: result.model,
-      status: result.status,
-      created_at: result.createdAt,
-      updated_at: now,
-      data: result
-    }));
-    const globalSources = global.sources.map((source) => ({
+function buildGlobalRows(global: NonNullable<ObservatoryData["globalObservatory"]>, ownerId: string) {
+  const now = new Date().toISOString();
+  const globalSources = global.sources.map((source) => ({
       id: ownerScopedId(ownerId, source.id),
       owner_id: ownerId,
       name: source.name,
@@ -161,7 +208,10 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       data: source,
       updated_at: now
     }));
-    const globalArticles = uniqueBy(global.events.flatMap((event) => event.sources), (source) => source.id).map((source) => ({
+    const persistedSourceIds = new Set(globalSources.map((source) => source.id));
+    const globalArticles = uniqueBy(global.events.flatMap((event) => event.sources), (source) => source.id)
+      .filter((source) => persistedSourceIds.has(ownerScopedId(ownerId, source.connectorId)))
+      .map((source) => ({
       id: ownerScopedId(ownerId, source.id),
       owner_id: ownerId,
       source_id: ownerScopedId(ownerId, source.connectorId),
@@ -193,8 +243,12 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       data: event,
       updated_at: now
     }));
-    const globalEventArticles = global.events.flatMap((event) =>
-      event.sources.map((source) => ({
+    const persistedEventIds = new Set(globalEvents.map((event) => event.id));
+    const persistedArticleIds = new Set(globalArticles.map((article) => article.id));
+    const globalEventArticles = uniqueBy(global.events.flatMap((event) =>
+      event.sources
+        .filter((source) => persistedEventIds.has(ownerScopedId(ownerId, event.id)) && persistedArticleIds.has(ownerScopedId(ownerId, source.id)))
+        .map((source) => ({
         owner_id: ownerId,
         event_id: ownerScopedId(ownerId, event.id),
         article_id: ownerScopedId(ownerId, source.id),
@@ -202,10 +256,12 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
         confidence: event.mergeCandidates.find((candidate) => candidate.eventId === event.id)?.confidence ?? 1,
         reason: event.mergeCandidates.find((candidate) => candidate.eventId === event.id)?.reason
       }))
-    );
+    ), (row) => `${row.event_id}:${row.article_id}`);
     const globalExcerpts = global.events.flatMap((event) =>
       event.sources.flatMap((source) =>
-        source.excerpts.map((excerpt) => ({
+        source.excerpts
+          .filter(() => persistedArticleIds.has(ownerScopedId(ownerId, source.id)))
+          .map((excerpt) => ({
           id: ownerScopedId(ownerId, excerpt.id),
           owner_id: ownerId,
           article_id: ownerScopedId(ownerId, source.id),
@@ -215,6 +271,7 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
         }))
       )
     );
+    const persistedExcerptIds = new Set(globalExcerpts.map((excerpt) => excerpt.id));
     const globalAnalyses = global.events.filter((event) => event.analysis).map((event) => ({
       id: ownerScopedId(ownerId, `analysis-${event.id}-${event.analysis?.engineVersion ?? "v1"}`),
       owner_id: ownerId,
@@ -233,14 +290,15 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
         confidence: claim.confidence,
         generated_at: event.analysis?.generatedAt ?? now,
         model_version: event.analysis?.engineVersion ?? "unknown",
-        data: claim
+      data: claim
       }))
     );
+    const persistedClaimIds = new Set(globalClaims.map((claim) => claim.id));
     const globalClaimSources = global.events.flatMap((event) =>
       (event.analysis?.claims ?? []).flatMap((claim) =>
-        claim.sourceIds.flatMap((sourceId) => {
+        claim.sourceIds.filter((sourceId) => persistedClaimIds.has(ownerScopedId(ownerId, claim.id)) && persistedArticleIds.has(ownerScopedId(ownerId, sourceId))).flatMap((sourceId) => {
           const excerptIds = claim.excerptIds.length ? claim.excerptIds : [undefined];
-          return excerptIds.map((excerptId) => ({
+          return excerptIds.filter((excerptId) => !excerptId || persistedExcerptIds.has(ownerScopedId(ownerId, excerptId))).map((excerptId) => ({
             id: ownerScopedId(ownerId, `${claim.id}:${sourceId}:${excerptId ?? "no-excerpt"}`),
             owner_id: ownerId,
             claim_id: ownerScopedId(ownerId, claim.id),
@@ -250,7 +308,7 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
         })
       )
     );
-    const globalSuggestions = global.events.filter((event) => event.studySuggestion).map((event) => ({
+    const globalSuggestions = global.events.filter((event) => event.studySuggestion && persistedEventIds.has(ownerScopedId(ownerId, event.id))).map((event) => ({
       id: ownerScopedId(ownerId, event.studySuggestion?.id ?? `suggestion-${event.id}`),
       owner_id: ownerId,
       event_id: ownerScopedId(ownerId, event.id),
@@ -260,7 +318,7 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       created_at: event.studySuggestion?.createdAt ?? now,
       updated_at: event.studySuggestion?.updatedAt ?? now
     }));
-    const globalLearningSignals = global.learningSignals.map((signal) => ({
+    const globalLearningSignals = global.learningSignals.filter((signal) => persistedEventIds.has(ownerScopedId(ownerId, signal.eventId))).map((signal) => ({
       id: ownerScopedId(ownerId, signal.id),
       owner_id: ownerId,
       event_id: ownerScopedId(ownerId, signal.eventId),
@@ -286,28 +344,35 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       data: log
     }));
 
-    const operations = [
-      this.client.from("observatory_profiles").upsert(profile, { onConflict: "owner_id" }),
-      studies.length ? this.client.from("studies").upsert(studies, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      observations.length ? this.client.from("observation_records").upsert(observations, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      drafts.length ? this.client.from("observation_drafts").upsert(drafts, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      aiResults.length ? this.client.from("ai_observation_results").upsert(aiResults, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalSources.length ? this.client.from("global_sources").upsert(globalSources, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalArticles.length ? this.client.from("global_articles").upsert(globalArticles, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalEvents.length ? this.client.from("global_events").upsert(globalEvents, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalEventArticles.length ? this.client.from("global_event_articles").upsert(globalEventArticles, { onConflict: "event_id,article_id" }) : Promise.resolve({ error: null }),
-      globalExcerpts.length ? this.client.from("global_excerpts").upsert(globalExcerpts, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalAnalyses.length ? this.client.from("global_analyses").upsert(globalAnalyses, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalClaims.length ? this.client.from("global_claims").upsert(globalClaims, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalClaimSources.length ? this.client.from("global_claim_sources").upsert(globalClaimSources, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalSuggestions.length ? this.client.from("global_study_suggestions").upsert(globalSuggestions, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalLearningSignals.length ? this.client.from("global_learning_signals").upsert(globalLearningSignals, { onConflict: "id" }) : Promise.resolve({ error: null }),
-      globalCollectionLogs.length ? this.client.from("global_collection_logs").upsert(globalCollectionLogs, { onConflict: "id" }) : Promise.resolve({ error: null })
-    ];
-    const results = await Promise.all(operations);
-    results.forEach((result) => throwIfError(result.error));
-    return normalizedData;
-  }
+  return {
+    globalSources,
+    globalArticles,
+    globalEvents,
+    globalEventArticles,
+    globalExcerpts,
+    globalClaims,
+    globalAnalyses,
+    globalClaimSources,
+    globalSuggestions,
+    globalLearningSignals,
+    globalCollectionLogs
+  };
+}
+
+async function upsertOrSkip(client: SupabaseClient, table: string, rows: unknown[] | unknown, onConflict: string) {
+  if (Array.isArray(rows) && rows.length === 0) return;
+  const result = await client.from(table).upsert(rows as Record<string, unknown> | Array<Record<string, unknown>>, { onConflict });
+  throwIfError(result.error, table);
+}
+
+function normalizeRepositoryData(data: ObservatoryData, ownerId: string): ObservatoryData {
+  const migrated = migrateObservatoryData({ ...data, ownerId });
+  return {
+    ...migrated,
+    studies: uniqueBy(migrated.studies, (study) => study.id),
+    observationDrafts: uniqueBy(migrated.observationDrafts ?? [], (draft) => draft.id),
+    aiObservationResults: uniqueBy(migrated.aiObservationResults ?? [], (result) => result.id)
+  };
 }
 
 function ownerScopedId(ownerId: string, id: string) {
@@ -324,9 +389,13 @@ function uniqueBy<T>(items: T[], getKey: (item: T) => string) {
   });
 }
 
-function throwIfError(error: unknown) {
+function throwIfError(error: unknown, domain?: string) {
   if (error) {
     const message = error instanceof Error ? error.message : JSON.stringify(error);
-    throw new Error(message);
+    throw new Error(domain ? `${domain}: ${message}` : message);
   }
+}
+
+function message(error: unknown) {
+  return error instanceof Error ? error.message : "Erreur de synchronisation";
 }

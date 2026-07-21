@@ -6,7 +6,7 @@ import { deleteStudyWithPersistence } from "./study-deletion";
 import { createSupabaseBrowserClient, isSupabaseConfigured } from "./supabase/client";
 import { LocalCacheRepository } from "./repositories/LocalCacheRepository";
 import { SupabaseObservatoryRepository } from "./repositories/SupabaseObservatoryRepository";
-import { SyncService, type SyncSnapshot, type SyncStatus } from "./repositories/SyncService";
+import { SyncService, type SyncSnapshot } from "./repositories/SyncService";
 
 export const STORAGE_KEY = "observatoire-reconnaissance:v1";
 
@@ -92,7 +92,7 @@ export const repository = {
     };
   },
 
-  async migrateLocalToRemote(ownerId: string): Promise<{ data: ObservatoryData; status: SyncStatus }> {
+  async migrateLocalToRemote(ownerId: string): Promise<SyncSnapshot> {
     const data = localCache.load();
     const owned = withOwner(data, ownerId);
     const saved = await syncService.save(owned, ownerId);
