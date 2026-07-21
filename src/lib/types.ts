@@ -3,6 +3,7 @@ import type { Edge, Node } from "@xyflow/react";
 export type AppView =
   | "journal"
   | "followup"
+  | "global-watch"
   | "dashboard"
   | "studies"
   | "states"
@@ -299,7 +300,7 @@ export interface ReflexiveRelationMetadata {
 
 export interface ObservatoryData {
   version: 1;
-  schemaVersion?: 2 | 3 | 4;
+  schemaVersion?: 2 | 3 | 4 | 5;
   ownerId?: string;
   createdAt?: string;
   updatedAt?: string;
@@ -312,6 +313,236 @@ export interface ObservatoryData {
   theoryPredictions?: TheoryPrediction[];
   reciprocalTestimonies?: ReciprocalTestimony[];
   reflexiveSignatures?: ReflexiveSignature[];
+  globalObservatory?: GlobalObservatoryState;
+}
+
+export type GlobalSourceType =
+  | "rss"
+  | "api"
+  | "web"
+  | "scientific-publication"
+  | "video"
+  | "podcast"
+  | "pdf-report"
+  | "official-document"
+  | "social-publication";
+
+export type GlobalEventCategory =
+  | "Individu"
+  | "Famille"
+  | "Société"
+  | "Politique"
+  | "Économie"
+  | "Guerre"
+  | "Santé"
+  | "Spiritualité"
+  | "Religion"
+  | "Éducation"
+  | "Science"
+  | "IA"
+  | "Environnement"
+  | "Culture"
+  | "Justice"
+  | "Technologie";
+
+export type GlobalInterestLevel =
+  | "Priorité très élevée"
+  | "Élevée"
+  | "Moyenne"
+  | "Faible"
+  | "Hors périmètre";
+
+export type GlobalMergeStatus = "auto-fusion" | "validation-requise" | "distinct";
+export type StudySuggestionStatus = "proposed" | "retained" | "abandoned";
+export type GlobalEventStatus = "active" | "studied" | "archived";
+
+export interface GlobalSourceConnector {
+  id: string;
+  name: string;
+  type: GlobalSourceType;
+  enabled: boolean;
+  endpoint?: string;
+  reliability: number;
+  countries: string[];
+  categories: GlobalEventCategory[];
+  updateFrequencyMinutes: number;
+  notes?: string;
+  lastCollectedAt?: string;
+}
+
+export interface GlobalCollectionLog {
+  id: string;
+  startedAt: string;
+  completedAt: string;
+  sourcesRequested: string[];
+  sourcesSucceeded: string[];
+  sourcesFailed: Array<{ sourceId: string; sourceName: string; error: string }>;
+  articlesFetched: number;
+  newEvents: number;
+  duplicateArticles: number;
+  mergedArticles: number;
+  ambiguousMerges: number;
+  mode: "manual" | "cron" | "test";
+}
+
+export interface GlobalCollectionReport extends GlobalCollectionLog {
+  sources: GlobalEventSource[];
+  events: GlobalObservedEvent[];
+}
+
+export interface GlobalSourceExcerpt {
+  id: string;
+  text: string;
+  location: string;
+  claimIds: string[];
+}
+
+export interface GlobalEventSource {
+  id: string;
+  externalId?: string;
+  connectorId: string;
+  connectorName: string;
+  title: string;
+  url?: string;
+  publishedAt: string;
+  country?: string;
+  language: string;
+  summary: string;
+  categories?: GlobalEventCategory[];
+  authors: string[];
+  excerpts: GlobalSourceExcerpt[];
+  collectedAt: string;
+}
+
+export interface GlobalTraceableClaim {
+  id: string;
+  text: string;
+  status: "fait rapporté" | "interprétation" | "hypothèse" | "limite";
+  sourceIds: string[];
+  excerptIds: string[];
+  confidence: number;
+}
+
+export interface GlobalReflexiveAnalysis {
+  eventId: string;
+  summary: string;
+  observedPhenomenon: string;
+  stakes: string;
+  recognitionMechanisms: string[];
+  observableDimensions: string[];
+  researchQuestions: string[];
+  hypotheses: string[];
+  similarStudySearch: string;
+  uncertainElements: string[];
+  sourceAgreement: {
+    confirmedByMultipleSources: string[];
+    singleSourceOnly: string[];
+    contested: string[];
+    unknown: string[];
+  };
+  claims: GlobalTraceableClaim[];
+  generatedAt: string;
+  engineVersion: string;
+}
+
+export interface GlobalInterestScore {
+  level: GlobalInterestLevel;
+  stars: 1 | 2 | 3 | 4 | 5;
+  score: number;
+  explanation: string;
+  factors: Array<{ label: string; impact: number; reason: string }>;
+}
+
+export interface GlobalStudySuggestion {
+  id: string;
+  eventId: string;
+  title: string;
+  rationale: string;
+  categories: GlobalEventCategory[];
+  hypotheses: string[];
+  sourceIds: string[];
+  claimIds: string[];
+  status: StudySuggestionStatus;
+  createdStudyIds: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GlobalMergeCandidate {
+  eventId: string;
+  confidence: number;
+  reason: string;
+  status: GlobalMergeStatus;
+}
+
+export interface GlobalLearningSignal {
+  id: string;
+  eventId: string;
+  suggestionId?: string;
+  studyId?: string;
+  action: "study-retained" | "study-abandoned" | "observation-added" | "pertinence-confirmed";
+  weight: number;
+  reason: string;
+  createdAt: string;
+}
+
+export interface GlobalObservedEvent {
+  id: string;
+  title: string;
+  normalizedTitle: string;
+  summary: string;
+  country?: string;
+  region?: string;
+  latitude?: number;
+  longitude?: number;
+  startedAt: string;
+  updatedAt: string;
+  status: GlobalEventStatus;
+  categories: GlobalEventCategory[];
+  themes: string[];
+  sourceIds: string[];
+  sources: GlobalEventSource[];
+  mergeCandidates: GlobalMergeCandidate[];
+  analysis?: GlobalReflexiveAnalysis;
+  interest?: GlobalInterestScore;
+  studySuggestion?: GlobalStudySuggestion;
+  learningWeight: number;
+  createdStudyIds: string[];
+}
+
+export interface GlobalMapPoint {
+  id: string;
+  eventId: string;
+  title: string;
+  country: string;
+  latitude: number;
+  longitude: number;
+  status: GlobalEventStatus;
+  interestStars: number;
+  studyCount: number;
+}
+
+export interface GlobalDashboardMetrics {
+  analyzedEvents: number;
+  activeEvents: number;
+  createdStudies: number;
+  frequentCategories: Array<{ label: GlobalEventCategory; value: number }>;
+  representedCountries: Array<{ label: string; value: number }>;
+  emergingThemes: Array<{ label: string; value: number }>;
+  studiedPhenomena: Array<{ label: string; value: number }>;
+  topStudyEvents: Array<{ eventId: string; title: string; studies: number }>;
+  trends: string[];
+}
+
+export interface GlobalObservatoryState {
+  sources: GlobalSourceConnector[];
+  events: GlobalObservedEvent[];
+  learningSignals: GlobalLearningSignal[];
+  mapPoints: GlobalMapPoint[];
+  dashboard: GlobalDashboardMetrics;
+  collectionLogs: GlobalCollectionLog[];
+  lastCollectedAt?: string;
+  lastAnalyzedAt?: string;
 }
 
 export type ObservationDraftStatus = "draft" | "reviewed" | "validated" | "rejected";

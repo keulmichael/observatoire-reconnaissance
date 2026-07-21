@@ -15,10 +15,13 @@ import {
   FileText,
   GitCompare,
   GitBranch,
+  Globe2,
   Home,
   Import,
+  Layers3,
   LogOut,
   Lock,
+  MapPin,
   Microscope,
   Network,
   Plus,
@@ -40,7 +43,7 @@ import {
   compareStates,
   exportStudy
 } from "@/lib/analytics";
-import type { AIConnectionStatus, AIObservationResult, AppView, ObservationAISettings, ObservationAnalysisDraft, Study, StudySynthesis, TheoryEvidenceRelation, TheoryRevisionProposal, TransitionStage } from "@/lib/types";
+import type { AIConnectionStatus, AIObservationResult, AppView, GlobalCollectionReport, GlobalObservedEvent, GlobalObservatoryState, ObservationAISettings, ObservationAnalysisDraft, Study, StudySynthesis, TheoryEvidenceRelation, TheoryRevisionProposal, TransitionStage } from "@/lib/types";
 import { RecognitionCharts } from "@/components/recognition-charts";
 import { ObservationAnalysis } from "@/components/journal/ObservationAnalysis";
 import { ObservationFollowup } from "@/components/journal/ObservationFollowup";
@@ -69,6 +72,7 @@ import { synthesisFilename } from "@/lib/engines/study-synthesis";
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "journal", label: "Journal d'Observation", icon: ClipboardList },
   { id: "followup", label: "Suivi", icon: Eye },
+  { id: "global-watch", label: "Veille mondiale", icon: Globe2 },
   { id: "dashboard", label: "Tableau de bord", icon: Home },
   { id: "studies", label: "Études", icon: BookOpen },
   { id: "states", label: "États", icon: Brain },
@@ -147,6 +151,11 @@ export default function ObservatoryApp() {
     createTheoryPrediction,
     linkPredictionObservation,
     generateStudySynthesis,
+    collectGlobalEvents,
+    analyzeGlobalEvent,
+    setGlobalSourceEnabled,
+    createStudyFromGlobalEvent,
+    abandonGlobalStudySuggestion,
     saveObservationDraft,
     integrateObservationDraft,
     authEmail,
@@ -381,6 +390,19 @@ export default function ObservatoryApp() {
             />
           )}
           {view === "followup" && <ObservationFollowup drafts={observationDrafts} study={selectedStudy} />}
+          {view === "global-watch" && (
+            <GlobalWatch
+              state={data.globalObservatory}
+              onCollect={collectGlobalEvents}
+              onAnalyze={analyzeGlobalEvent}
+              onCreateStudy={(eventId) => {
+                const studyId = createStudyFromGlobalEvent(eventId);
+                if (studyId) setView("studies");
+              }}
+              onAbandon={abandonGlobalStudySuggestion}
+              onToggleSource={setGlobalSourceEnabled}
+            />
+          )}
           {view === "dashboard" && (
             <>
               <AnalysisScope scope="all" studies={data.studies} />
@@ -1340,6 +1362,377 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
       {label}
     </label>
   );
+}
+
+function GlobalWatch({
+  state,
+  onCollect,
+  onAnalyze,
+  onCreateStudy,
+  onAbandon,
+  onToggleSource
+}: {
+  state?: GlobalObservatoryState;
+  onCollect: () => Promise<GlobalCollectionReport>;
+  onAnalyze: (eventId: string) => void;
+  onCreateStudy: (eventId: string) => void;
+  onAbandon: (eventId: string) => void;
+  onToggleSource: (sourceId: string, enabled: boolean) => void;
+}) {
+  const [collecting, setCollecting] = useState(false);
+  const [collectionReport, setCollectionReport] = useState<GlobalCollectionReport | null>(null);
+  const [collectionError, setCollectionError] = useState("");
+  const [sourceFilter, setSourceFilter] = useState("all");
+  const [countryFilter, setCountryFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [interestFilter, setInterestFilter] = useState("all");
+  const observatory = state ?? {
+    sources: [],
+    events: [],
+    learningSignals: [],
+    mapPoints: [],
+    dashboard: {
+      analyzedEvents: 0,
+      activeEvents: 0,
+      createdStudies: 0,
+      frequentCategories: [],
+      representedCountries: [],
+      emergingThemes: [],
+      studiedPhenomena: [],
+      topStudyEvents: [],
+      trends: []
+    },
+    collectionLogs: []
+  };
+  const filteredEvents = observatory.events.filter((event) =>
+    (sourceFilter === "all" || event.sources.some((source) => source.connectorId === sourceFilter))
+    && (countryFilter === "all" || (event.country ?? "Monde") === countryFilter)
+    && (categoryFilter === "all" || event.categories.includes(categoryFilter as never))
+    && (interestFilter === "all" || event.interest?.level === interestFilter)
+  );
+  const sortedEvents = [...filteredEvents].sort((left, right) => (right.interest?.score ?? 0) - (left.interest?.score ?? 0));
+  const countries = [...new Set(observatory.events.map((event) => event.country ?? "Monde"))].sort();
+  const categories = [...new Set(observatory.events.flatMap((event) => event.categories))].sort();
+  const interestLevels = [...new Set(observatory.events.map((event) => event.interest?.level).filter(Boolean))].sort();
+
+  return (
+    <div className="grid gap-4">
+      <Panel title="Observatoire mondial">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <p className="max-w-3xl text-sm leading-6 text-stone-300">
+              Les articles collectes sont traites comme des sources. Le centre de cette veille est l&apos;evenement observe:
+              un meme evenement peut reunir plusieurs sources, produire une analyse traçable, puis devenir une etude.
+            </p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Badge>NewsCollector</Badge>
+              <Badge>SourceManager</Badge>
+              <Badge>ReflexiveAnalyzer</Badge>
+              <Badge>LearningEngine</Badge>
+            </div>
+          </div>
+          <button
+            className="flex items-center justify-center gap-2 rounded-md bg-gold px-3 py-2 text-sm font-semibold text-night disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={collecting}
+            onClick={async () => {
+              setCollecting(true);
+              setCollectionError("");
+              try {
+                setCollectionReport(await onCollect());
+              } catch (error) {
+                setCollectionError(error instanceof Error ? error.message : "Collecte impossible.");
+              } finally {
+                setCollecting(false);
+              }
+            }}
+          >
+            <RefreshCw className={`h-4 w-4 ${collecting ? "animate-spin" : ""}`} aria-hidden /> Actualiser les actualites
+          </button>
+        </div>
+      </Panel>
+
+      {collectionReport || collectionError || observatory.collectionLogs[0] ? (
+        <Panel title="Derniere collecte">
+          {collectionError ? <p className="mb-3 rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">{collectionError}</p> : null}
+          <CollectionReport report={collectionReport ?? observatory.collectionLogs[0]} />
+        </Panel>
+      ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Evenements actifs" value={observatory.dashboard.activeEvents} />
+        <StatCard label="Evenements analyses" value={observatory.dashboard.analyzedEvents} />
+        <StatCard label="Etudes creees" value={observatory.dashboard.createdStudies} />
+        <StatCard label="Sources actives" value={observatory.sources.filter((source) => source.enabled).length} />
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.2fr_0.8fr]">
+        <Panel title="Sources configurables">
+          <div className="grid gap-3">
+            {observatory.sources.map((source) => (
+              <div key={source.id} className="flex flex-col gap-3 rounded-md border border-white/10 bg-white/[0.04] p-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="font-medium text-white">{source.name}</p>
+                    <Badge>{source.type}</Badge>
+                    <Badge>fiabilite {Math.round(source.reliability * 100)}%</Badge>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-stone-400">{source.notes ?? "Connecteur configurable."}</p>
+                  <p className="mt-1 text-xs text-stone-500">Pays: {source.countries.join(", ")} - Categories: {source.categories.join(", ")}</p>
+                </div>
+                <label className="flex items-center gap-2 text-sm text-stone-200">
+                  <input
+                    type="checkbox"
+                    checked={source.enabled}
+                    onChange={(event) => onToggleSource(source.id, event.target.checked)}
+                  />
+                  Actif
+                </label>
+              </div>
+            ))}
+          </div>
+        </Panel>
+
+        <Panel title="Tableau de bord mondial">
+          <div className="grid gap-4">
+            <MiniRank title="Categories emergentes" items={observatory.dashboard.frequentCategories} />
+            <MiniRank title="Pays les plus observes" items={observatory.dashboard.representedCountries} />
+            <MiniRank title="Phenomenes les plus etudies" items={observatory.dashboard.studiedPhenomena} />
+            <MiniRank title="Themes emergents" items={observatory.dashboard.emergingThemes} />
+            {observatory.dashboard.trends.length ? <TagBlock title="Nouvelles tendances" items={observatory.dashboard.trends} /> : null}
+          </div>
+        </Panel>
+      </div>
+
+      <Panel title="Carte mondiale">
+        {observatory.mapPoints.length ? (
+          <div className="relative min-h-72 overflow-hidden rounded-md border border-white/10 bg-[radial-gradient(circle_at_20%_25%,rgba(217,183,91,0.16),transparent_28%),linear-gradient(135deg,rgba(15,23,42,0.8),rgba(20,20,18,0.95))]">
+            <div className="absolute inset-x-6 top-1/2 h-px bg-white/10" />
+            <div className="absolute inset-y-6 left-1/2 w-px bg-white/10" />
+            {observatory.mapPoints.map((point) => (
+              <div
+                key={point.id}
+                className="absolute flex -translate-x-1/2 -translate-y-1/2 items-center gap-2 rounded-md border border-gold/30 bg-night/85 px-2 py-1 text-xs text-goldSoft"
+                style={{
+                  left: `${Math.max(8, Math.min(92, ((point.longitude + 180) / 360) * 100))}%`,
+                  top: `${Math.max(10, Math.min(90, ((90 - point.latitude) / 180) * 100))}%`
+                }}
+              >
+                <MapPin className="h-3.5 w-3.5" aria-hidden />
+                {point.country} · {point.interestStars}★
+              </div>
+            ))}
+          </div>
+        ) : (
+          <SmartEmpty text="Aucun evenement geolocalisable. Lancez une mise a jour." />
+        )}
+      </Panel>
+
+      <Panel title="Evenements observes">
+        <div className="mb-4 grid gap-3 md:grid-cols-4">
+          <SelectFilter label="Source" value={sourceFilter} onChange={setSourceFilter} options={observatory.sources.map((source) => ({ value: source.id, label: source.name }))} />
+          <SelectFilter label="Pays" value={countryFilter} onChange={setCountryFilter} options={countries.map((country) => ({ value: country, label: country }))} />
+          <SelectFilter label="Categorie" value={categoryFilter} onChange={setCategoryFilter} options={categories.map((category) => ({ value: category, label: category }))} />
+          <SelectFilter label="Interet" value={interestFilter} onChange={setInterestFilter} options={interestLevels.map((level) => ({ value: level ?? "", label: level ?? "" }))} />
+        </div>
+        <div className="grid gap-3">
+          {sortedEvents.length ? sortedEvents.map((event) => (
+            <GlobalEventCard
+              key={event.id}
+              event={event}
+              onAnalyze={onAnalyze}
+              onCreateStudy={onCreateStudy}
+              onAbandon={onAbandon}
+            />
+          )) : <SmartEmpty text="Aucun evenement collecte. Activez au moins une source puis mettez a jour." />}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function GlobalEventCard({
+  event,
+  onAnalyze,
+  onCreateStudy,
+  onAbandon
+}: {
+  event: GlobalObservedEvent;
+  onAnalyze: (eventId: string) => void;
+  onCreateStudy: (eventId: string) => void;
+  onAbandon: (eventId: string) => void;
+}) {
+  return (
+    <article className="rounded-md border border-white/10 bg-white/[0.04] p-4">
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Badge>{event.status}</Badge>
+            <Badge>{event.country ?? "Monde"}</Badge>
+            <Badge>{event.sources.length} source(s)</Badge>
+            {event.interest ? <Badge>{interestStars(event.interest.stars)} {event.interest.level}</Badge> : null}
+          </div>
+          <h3 className="mt-3 text-lg font-semibold text-white">{event.title}</h3>
+          <p className="mt-2 text-sm leading-6 text-stone-300">{event.summary}</p>
+        </div>
+        <div className="flex flex-wrap gap-2 lg:justify-end">
+          <button className="flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200" onClick={() => onAnalyze(event.id)}>
+            <Layers3 className="h-4 w-4" aria-hidden /> Analyser
+          </button>
+          <button className="flex items-center gap-2 rounded-md bg-gold px-3 py-2 text-sm font-semibold text-night" onClick={() => onCreateStudy(event.id)}>
+            <Plus className="h-4 w-4" aria-hidden /> Creer une etude
+          </button>
+          <button className="flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-sm text-stone-300" onClick={() => onAbandon(event.id)}>
+            <Trash2 className="h-4 w-4" aria-hidden /> Abandonner
+          </button>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-4 xl:grid-cols-2">
+        <div>
+          <TagBlock title="Categories" items={event.categories} />
+          <TagBlock title="Themes" items={event.themes.slice(0, 8)} />
+          {event.interest ? (
+            <div className="mt-4 rounded-md border border-gold/20 bg-gold/8 p-3">
+              <p className="text-sm font-medium text-goldSoft">Score explique</p>
+              <p className="mt-2 text-sm leading-6 text-stone-200">{event.interest.explanation}</p>
+            </div>
+          ) : null}
+          {event.mergeCandidates.length ? (
+            <div className="mt-4 rounded-md border border-sky-300/25 bg-sky-400/10 p-3">
+              <p className="text-sm font-medium text-sky-100">Fusion</p>
+              {event.mergeCandidates.map((candidate) => (
+                <p key={`${candidate.eventId}-${candidate.status}`} className="mt-2 text-sm leading-6 text-sky-100">
+                  {candidate.status} · confiance {Math.round(candidate.confidence * 100)}% · {candidate.reason}
+                </p>
+              ))}
+            </div>
+          ) : null}
+        </div>
+
+        <div>
+          <h4 className="text-xs uppercase tracking-[0.18em] text-stone-500">Sources rattachees</h4>
+          <div className="mt-2 grid gap-2">
+            {event.sources.map((source) => (
+              <div key={source.id} className="rounded-md border border-white/10 bg-night/30 p-3">
+                <p className="text-sm font-medium text-white">{source.connectorName}</p>
+                <p className="mt-1 text-sm leading-6 text-stone-300">{source.title}</p>
+                {source.url ? <a className="mt-1 block text-xs text-goldSoft underline" href={source.url} target="_blank" rel="noreferrer">{source.url}</a> : null}
+                {source.excerpts.map((excerpt) => (
+                  <p key={excerpt.id} className="mt-2 border-l border-gold/30 pl-3 text-xs leading-5 text-stone-400">{excerpt.text}</p>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {event.analysis ? (
+        <div className="mt-4 grid gap-4 xl:grid-cols-2">
+          <div className="rounded-md border border-white/10 bg-white/[0.03] p-3">
+            <p className="text-sm font-medium text-white">Analyse reflexive</p>
+            <p className="mt-2 text-sm leading-6 text-stone-300">{event.analysis.observedPhenomenon}</p>
+            <p className="mt-2 text-sm leading-6 text-stone-300">{event.analysis.stakes}</p>
+            <TagBlock title="Mecanismes possibles" items={event.analysis.recognitionMechanisms} />
+            <TagBlock title="Questions de recherche" items={event.analysis.researchQuestions} />
+            <TagBlock title="Hypotheses" items={event.analysis.hypotheses} />
+            <TagBlock title="Elements hypothetiques" items={event.analysis.uncertainElements} />
+            <TagBlock title="Confirme par plusieurs sources" items={event.analysis.sourceAgreement.confirmedByMultipleSources} />
+            <TagBlock title="Une seule source" items={event.analysis.sourceAgreement.singleSourceOnly} />
+            <TagBlock title="Conteste" items={event.analysis.sourceAgreement.contested} />
+            <TagBlock title="Inconnu" items={event.analysis.sourceAgreement.unknown} />
+          </div>
+          <div className="rounded-md border border-white/10 bg-white/[0.03] p-3">
+            <p className="text-sm font-medium text-white">Traçabilite des claims</p>
+            <div className="mt-2 grid gap-2">
+              {event.analysis.claims.map((claim) => (
+                <div key={claim.id} className="rounded-md border border-white/10 bg-night/30 p-3">
+                  <div className="flex flex-wrap gap-2">
+                    <Badge>{claim.status}</Badge>
+                    <Badge>{Math.round(claim.confidence * 100)}%</Badge>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-stone-300">{claim.text}</p>
+                  <p className="mt-2 text-xs text-stone-500">Sources: {claim.sourceIds.join(", ") || "non renseignees"} · Extraits: {claim.excerptIds.join(", ") || "limite methodologique"}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function MiniRank({ title, items }: { title: string; items: Array<{ label: string; value: number }> }) {
+  return (
+    <div>
+      <h3 className="text-xs uppercase tracking-[0.18em] text-stone-500">{title}</h3>
+      <div className="mt-2 grid gap-2">
+        {items.length ? items.map((item) => (
+          <div key={item.label} className="flex items-center justify-between gap-3 rounded-md border border-white/10 bg-white/[0.04] px-3 py-2">
+            <span className="text-sm text-stone-200">{item.label}</span>
+            <Badge>{item.value}</Badge>
+          </div>
+        )) : <p className="text-sm text-stone-500">Non renseigne</p>}
+      </div>
+    </div>
+  );
+}
+
+function CollectionReport({ report }: { report?: GlobalCollectionReport | GlobalObservatoryState["collectionLogs"][number] }) {
+  if (!report) return <SmartEmpty text="Aucune collecte executee." />;
+  return (
+    <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+      <StatCard label="Sources interrogees" value={report.sourcesRequested.length} hint={`${report.sourcesSucceeded.length} reussie(s)`} />
+      <StatCard label="Articles recuperes" value={report.articlesFetched} />
+      <StatCard label="Nouveaux evenements" value={report.newEvents} />
+      <StatCard label="Articles fusionnes" value={report.mergedArticles} hint={`${report.duplicateArticles} doublon(s), ${report.ambiguousMerges} ambigu(s)`} />
+      <div className="md:col-span-2 xl:col-span-4">
+        <p className="text-xs uppercase tracking-[0.18em] text-stone-500">Date de collecte</p>
+        <p className="mt-1 text-sm text-stone-300">{formatBuildDate(report.completedAt)}</p>
+        {report.sourcesFailed.length ? (
+          <div className="mt-3 grid gap-2">
+            {report.sourcesFailed.map((failure) => (
+              <p key={failure.sourceId} className="rounded-md border border-red-400/25 bg-red-500/10 p-2 text-sm text-red-100">
+                {failure.sourceName}: {failure.error}
+              </p>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function SelectFilter({
+  label,
+  value,
+  onChange,
+  options
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+}) {
+  return (
+    <label className="grid gap-2">
+      <span className="text-xs uppercase tracking-[0.18em] text-stone-500">{label}</span>
+      <select
+        className="rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+      >
+        <option className="bg-ink" value="all">Tous</option>
+        {options.map((option) => (
+          <option className="bg-ink" key={option.value} value={option.value}>{option.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function interestStars(stars: number) {
+  return "★".repeat(Math.max(1, Math.min(5, stars)));
 }
 
 function Dashboard({

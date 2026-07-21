@@ -3,13 +3,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { repository } from "./repository";
-import type { ObservationAnalysisDraft, ObservatoryData, Study, TheoryEvidenceRelation, TheoryPrediction, TheoryRevisionProposal } from "./types";
+import type { GlobalCollectionReport, ObservationAnalysisDraft, ObservatoryData, Study, TheoryEvidenceRelation, TheoryPrediction, TheoryRevisionProposal } from "./types";
 import { downloadJson } from "./analytics";
 import { addObservationToStudy, constructScientificStudy } from "./parser/ScientificConstruction";
 import { migrateObservatoryData, normalizeStudy } from "./data-migration";
 import { formatStudyDeletionConfirmation } from "./study-deletion";
 import { buildTheoryEvidenceLink, TheoryEngine } from "./engines/TheoryEngine";
 import { StudySynthesisEngine } from "./engines/study-synthesis";
+import { GlobalObservatory, StudySuggestionEngine } from "./global-observatory";
 import type { SyncStatus } from "./repositories/SyncService";
 
 export function useObservatory() {
@@ -301,6 +302,100 @@ export function useObservatory() {
     return generatedId;
   }
 
+  async function collectGlobalEvents() {
+    const state = data.globalObservatory ?? GlobalObservatory.initialState();
+    const response = await fetch("/api/global-observatory/collect", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        state,
+        sourceIds: state.sources.filter((source) => source.enabled).map((source) => source.id),
+        maxItemsPerSource: 8
+      })
+    });
+    if (!response.ok) {
+      const error = (await response.json().catch(() => ({}))) as { error?: string };
+      throw new Error(error.error ?? "Collecte impossible.");
+    }
+    const payload = (await response.json()) as { report: GlobalCollectionReport };
+    setData((current) => {
+      const currentGlobal = current.globalObservatory ?? GlobalObservatory.initialState();
+      return {
+        ...current,
+        globalObservatory: GlobalObservatory.refresh({
+          ...currentGlobal,
+          events: payload.report.events,
+          collectionLogs: [
+            payload.report,
+            ...((currentGlobal.collectionLogs ?? []).filter((log) => log.id !== payload.report.id))
+          ].slice(0, 50),
+          lastCollectedAt: payload.report.completedAt
+        })
+      };
+    });
+    return payload.report;
+  }
+
+  function analyzeGlobalEvent(eventId: string) {
+    setData((current) => ({
+      ...current,
+      globalObservatory: GlobalObservatory.analyzeEventById(
+        current.globalObservatory ?? GlobalObservatory.initialState(),
+        eventId
+      )
+    }));
+  }
+
+  function setGlobalSourceEnabled(sourceId: string, enabled: boolean) {
+    setData((current) => ({
+      ...current,
+      globalObservatory: GlobalObservatory.setSourceEnabled(
+        current.globalObservatory ?? GlobalObservatory.initialState(),
+        sourceId,
+        enabled
+      )
+    }));
+  }
+
+  function createStudyFromGlobalEvent(eventId: string) {
+    const now = new Date().toISOString();
+    let createdStudyId: string | null = null;
+    setData((current) => {
+      const globalObservatory = GlobalObservatory.refresh(current.globalObservatory ?? GlobalObservatory.initialState());
+      const event = globalObservatory.events.find((item) => item.id === eventId);
+      if (!event) return current;
+      const study = {
+        ...StudySuggestionEngine.createStudy(event, now),
+        ownerId: authUserId ?? undefined
+      };
+      createdStudyId = study.id;
+      const withLearning = GlobalObservatory.recordLearning(globalObservatory, eventId, "study-retained", {
+        suggestionId: event.studySuggestion?.id,
+        studyId: study.id,
+        reason: "Creation d'une etude depuis un evenement observe.",
+        now
+      });
+      return {
+        ...current,
+        studies: [study, ...current.studies],
+        globalObservatory: withLearning
+      };
+    });
+    if (createdStudyId) setSelectedStudyId(createdStudyId);
+    return createdStudyId;
+  }
+
+  function abandonGlobalStudySuggestion(eventId: string) {
+    setData((current) => ({
+      ...current,
+      globalObservatory: GlobalObservatory.recordLearning(
+        current.globalObservatory ?? GlobalObservatory.initialState(),
+        eventId,
+        "study-abandoned"
+      )
+    }));
+  }
+
   function integrateObservationDraft(draft: ObservationAnalysisDraft, targetStudyId: string | "new" = "new") {
     const validatedDraft: ObservationAnalysisDraft = { ...draft, status: "validated" };
     const targetStudy = data.studies.find((study) => study.id === targetStudyId);
@@ -390,6 +485,11 @@ export function useObservatory() {
     createTheoryPrediction,
     linkPredictionObservation,
     generateStudySynthesis,
+    collectGlobalEvents,
+    analyzeGlobalEvent,
+    setGlobalSourceEnabled,
+    createStudyFromGlobalEvent,
+    abandonGlobalStudySuggestion,
     saveObservationDraft,
     integrateObservationDraft,
     authUserId,
