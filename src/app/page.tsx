@@ -75,6 +75,7 @@ import {
   type LocalStorageDiagnosticEntry
 } from "@/lib/local-storage-diagnostics";
 import { HistoricalImportEngine } from "@/lib/global-observatory/HistoricalImportEngine";
+import type { LocalMigrationDiagnostic } from "@/lib/local-migration-diagnostics";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "journal", label: "Journal d'Observation", icon: ClipboardList },
@@ -175,7 +176,9 @@ export default function ObservatoryApp() {
     signUp,
     signOut,
     migrationSummary,
-    migrateLocalToRemote
+    compareLocalWithRemote,
+    migrateLocalToRemote,
+    removeLocalBackup
   } = useObservatory();
   const [view, setView] = useState<AppView>("journal");
   const [query, setQuery] = useState("");
@@ -295,7 +298,9 @@ export default function ObservatoryApp() {
             onSignUp={signUp}
             onSignOut={signOut}
             migrationSummary={migrationSummary}
+            onCompare={compareLocalWithRemote}
             onMigrate={migrateLocalToRemote}
+            onRemoveLocalBackup={removeLocalBackup}
           />
           <nav className="grid gap-1" aria-label="Navigation principale">
             {views.map((item) => {
@@ -1256,7 +1261,9 @@ function AuthPanel({
   onSignUp,
   onSignOut,
   migrationSummary,
-  onMigrate
+  onCompare,
+  onMigrate,
+  onRemoveLocalBackup
 }: {
   configured: boolean;
   userEmail: string | null;
@@ -1266,49 +1273,136 @@ function AuthPanel({
   onSignUp: (email: string, password: string) => Promise<void>;
   onSignOut: () => Promise<void>;
   migrationSummary: () => { hasLocalData: boolean; studies: number; observations: number; drafts: number; exportData: unknown };
+  onCompare: () => Promise<LocalMigrationDiagnostic>;
   onMigrate: () => Promise<unknown>;
+  onRemoveLocalBackup: () => Promise<unknown>;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<LocalMigrationDiagnostic | null>(null);
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
   const summary = migrationSummary();
   const migrationRisk = summarizeMigrationExport(summary.exportData);
 
-  async function run(action: "signin" | "signup" | "migrate" | "signout") {
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshDiagnostic() {
+      if (!configured || !userEmail || !summary.hasLocalData) {
+        setDiagnostic(null);
+        return;
+      }
+      setDiagnosticLoading(true);
+      try {
+        const result = await onCompare();
+        if (!cancelled) setDiagnostic(result);
+      } catch {
+        if (!cancelled) setDiagnostic(null);
+      } finally {
+        if (!cancelled) setDiagnosticLoading(false);
+      }
+    }
+    void refreshDiagnostic();
+    return () => {
+      cancelled = true;
+    };
+  }, [configured, onCompare, summary.hasLocalData, summary.observations, summary.studies, summary.drafts, userEmail]);
+
+  async function exportLocalBackup(prefix: string) {
+    const blob = new Blob([JSON.stringify(summary.exportData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${prefix}-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function refreshComparison() {
+    setBusy(true);
+    setNotice("");
+    try {
+      const result = await onCompare();
+      setDiagnostic(result);
+      setNotice(migrationStatusNotice(result));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Comparaison impossible.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeLocalCopy() {
+    const latest = await onCompare();
+    setDiagnostic(latest);
+    if (!latest.canDeleteLocal) {
+      throw new Error("Suppression locale bloquee : les donnees correspondantes ne sont pas confirmees dans Supabase.");
+    }
+    const confirmation = window.prompt(
+      [
+        "Confirmez la suppression de la copie locale uniquement.",
+        "Les donnees Supabase ne seront pas supprimees.",
+        "Tapez SUPPRIMER LA COPIE LOCALE pour continuer."
+      ].join("\n")
+    );
+    if (confirmation !== "SUPPRIMER LA COPIE LOCALE") {
+      setNotice("Suppression locale annulee.");
+      return;
+    }
+    await exportLocalBackup("observatoire-dernier-export-avant-suppression-locale");
+    await onRemoveLocalBackup();
+    setDiagnostic(null);
+    setNotice("Copie locale supprimee. Aucune donnee Supabase n'a ete supprimee.");
+  }
+
+  async function run(action: "signin" | "signup" | "migrate" | "signout" | "compare" | "export" | "remove-local") {
     setBusy(true);
     setNotice("");
     try {
       if (action === "signin") await onSignIn(email, password);
       if (action === "signup") await onSignUp(email, password);
+      if (action === "compare") {
+        await refreshComparison();
+        return;
+      }
+      if (action === "export") {
+        await exportLocalBackup("observatoire-sauvegarde-locale");
+        setNotice("Sauvegarde JSON exportee.");
+      }
+      if (action === "remove-local") {
+        await removeLocalCopy();
+        return;
+      }
       if (action === "migrate") {
         if (migrationRisk.hasObsTechnicalData) {
           throw new Error("Migration bloquee : des ownerId obs-* ont ete detectes dans les donnees locales.");
         }
+        const latest = await onCompare();
+        setDiagnostic(latest);
+        if (!latest.canMigrateMissing) {
+          throw new Error("Migration bloquee : aucune donnee locale manquante n'a ete detectee.");
+        }
         const confirmed = window.confirm(
           [
-            `Confirmer la migration vers ${userEmail ?? "le compte connecte"} ?`,
-            `${summary.studies} etude(s), ${summary.observations} observation(s), ${summary.drafts} brouillon(s).`,
+            `Confirmer l'import des donnees locales manquantes vers ${userEmail ?? "le compte connecte"} ?`,
+            `${latest.missing.studies} etude(s), ${latest.missing.observations} observation(s), ${latest.missing.drafts} brouillon(s) manquant(s).`,
             migrationRisk.duplicateIds ? `${migrationRisk.duplicateIds} doublon(s) d'identifiant detecte(s) localement.` : "Aucun doublon d'identifiant local detecte.",
-            "Une sauvegarde JSON sera telechargee avant l'import. Aucune donnee obs-* ne doit etre migree."
+            "Une sauvegarde JSON sera telechargee avant l'import. Aucun import integral aveugle ne sera lance."
           ].join("\n")
         );
         if (!confirmed) {
           setNotice("Migration annulee. Aucune donnee n'a ete importee.");
           return;
         }
-        const blob = new Blob([JSON.stringify(summary.exportData, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `observatoire-export-avant-migration-${new Date().toISOString().slice(0, 10)}.json`;
-        link.click();
-        URL.revokeObjectURL(url);
+        await exportLocalBackup("observatoire-export-avant-migration");
         await onMigrate();
+        const refreshed = await onCompare();
+        setDiagnostic(refreshed);
       }
       if (action === "signout") await onSignOut();
       setNotice(action === "migrate"
-        ? `Migration terminee vers ${userEmail ?? "le compte connecte"} : ${summary.studies} etude(s), ${summary.observations} observation(s), ${summary.drafts} brouillon(s). Les donnees locales sont conservees jusqu'a suppression explicite.`
+        ? `Import termine vers ${userEmail ?? "le compte connecte"}. Les donnees locales sont conservees jusqu'a suppression explicite.`
         : "Operation terminee.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Operation impossible.");
@@ -1334,13 +1428,33 @@ function AuthPanel({
           <button className="flex items-center justify-center gap-2 rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200" disabled={busy} onClick={() => void run("signout")}>
             <LogOut className="h-3.5 w-3.5" aria-hidden /> Deconnexion
           </button>
-          {summary.hasLocalData ? (
+          {diagnosticLoading ? <p className="text-xs leading-5 text-stone-400">Comparaison de la sauvegarde locale avec le compte...</p> : null}
+          {diagnostic?.status === "already-migrated" ? (
+            <div className="rounded-md border border-emerald-400/30 bg-emerald-500/10 p-3">
+              <p className="text-xs font-semibold text-emerald-100">Sauvegarde locale conservee</p>
+              <p className="mt-1 text-xs leading-5 text-emerald-50/90">Ces donnees ont deja ete migrees vers votre compte. La copie locale est conservee comme sauvegarde.</p>
+            </div>
+          ) : null}
+          {diagnostic?.status === "local-new-data" || diagnostic?.status === "partial-difference" || diagnostic?.status === "migration-incomplete" ? (
+            <p className="rounded-md border border-amber-300/30 bg-amber-400/10 p-3 text-xs font-semibold text-amber-100">Nouvelles donnees locales detectees</p>
+          ) : null}
+          {summary.hasLocalData && diagnostic?.canMigrateMissing ? (
             <button className="rounded-md border border-gold/30 px-3 py-2 text-xs text-goldSoft disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || migrationRisk.hasObsTechnicalData} onClick={() => void run("migrate")}>
-              Migrer mes donnees locales vers mon compte ({summary.studies} etude(s), {summary.observations} observation(s))
+              Importer les donnees locales manquantes ({diagnostic.missing.studies} etude(s), {diagnostic.missing.observations} observation(s))
             </button>
+          ) : null}
+          {summary.hasLocalData && diagnostic ? (
+            <div className="grid grid-cols-1 gap-2">
+              <button className="rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200 disabled:opacity-50" disabled={busy} onClick={() => void run("compare")}>Comparer avec le compte</button>
+              <button className="rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200 disabled:opacity-50" disabled={busy} onClick={() => void run("export")}>Exporter la sauvegarde JSON</button>
+              <button className="rounded-md border border-red-400/30 px-3 py-2 text-xs text-red-100 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || !diagnostic.canDeleteLocal} onClick={() => void run("remove-local")}>Supprimer la copie locale</button>
+            </div>
           ) : null}
           {migrationRisk.hasObsTechnicalData ? (
             <p className="text-xs leading-5 text-amber-200">Migration bloquee : des donnees techniques obs-* sont presentes dans le cache local courant.</p>
+          ) : null}
+          {diagnostic?.status === "migrated-to-other-owner" ? (
+            <p className="text-xs leading-5 text-amber-200">Cette sauvegarde locale a deja ete migree vers un autre compte. L&apos;import automatique est bloque.</p>
           ) : null}
           {migrationRisk.duplicateIds ? (
             <p className="text-xs leading-5 text-amber-200">{migrationRisk.duplicateIds} doublon(s) d&apos;identifiant detecte(s) avant migration.</p>
@@ -1368,6 +1482,16 @@ function syncLabel(status: string) {
   if (status === "offline") return "Hors ligne";
   if (status === "error") return "Erreur de synchronisation";
   return "Cache local";
+}
+
+function migrationStatusNotice(diagnostic: LocalMigrationDiagnostic) {
+  if (diagnostic.status === "already-migrated") return "La sauvegarde locale correspond au compte.";
+  if (diagnostic.status === "remote-empty") return "Le compte ne contient pas encore ces donnees locales.";
+  if (diagnostic.status === "local-new-data") return "Nouvelles donnees locales detectees.";
+  if (diagnostic.status === "partial-difference") return "Differences partielles detectees entre la copie locale et le compte.";
+  if (diagnostic.status === "migration-incomplete") return "Derniere migration incomplete : seuls les elements manquants seront proposes.";
+  if (diagnostic.status === "migrated-to-other-owner") return "Cette sauvegarde a deja ete migree vers un autre compte.";
+  return "Aucune donnee locale a comparer.";
 }
 
 function summarizeMigrationExport(value: unknown) {

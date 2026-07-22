@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { repository } from "./repository";
+import type { LocalMigrationDiagnostic } from "./local-migration-diagnostics";
 import type { GlobalCollectionReport, HistoricalImportRequest, HistoricalImportSession, ObservationAnalysisDraft, ObservatoryData, Study, TheoryEvidenceRelation, TheoryPrediction, TheoryRevisionProposal } from "./types";
 import { downloadJson } from "./analytics";
 import { addObservationToStudy, constructScientificStudy } from "./parser/ScientificConstruction";
@@ -472,14 +473,24 @@ export function useObservatory() {
     setSyncStatus("local-cache");
   }
 
-  async function migrateLocalToRemote() {
+  const migrateLocalToRemote = useCallback(async () => {
     if (!authUserId) throw new Error("Connexion requise avant migration.");
     const snapshot = await repository.migrateLocalToRemote(authUserId);
     setData(snapshot.data);
     setSyncStatus(snapshot.status);
     setSyncError(snapshot.error ?? snapshot.warning ?? "");
     return snapshot;
-  }
+  }, [authUserId]);
+
+  const compareLocalWithRemote = useCallback(async (): Promise<LocalMigrationDiagnostic> => {
+    if (!authUserId) throw new Error("Connexion requise avant comparaison.");
+    return repository.localMigrationDiagnostic(authUserId);
+  }, [authUserId]);
+
+  const removeLocalBackup = useCallback(async () => {
+    if (!authUserId) throw new Error("Connexion requise avant suppression locale.");
+    return repository.removeLocalBackup(authUserId);
+  }, [authUserId]);
 
   return {
     data,
@@ -525,7 +536,9 @@ export function useObservatory() {
     signUp,
     signOut,
     migrationSummary: repository.migrationSummary,
+    compareLocalWithRemote,
     migrateLocalToRemote,
+    removeLocalBackup,
     persistNow
   };
 }
