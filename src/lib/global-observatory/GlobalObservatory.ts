@@ -21,6 +21,7 @@ export class GlobalObservatory {
     return {
       ...state,
       events,
+      historicalImports: state.historicalImports ?? [],
       mapPoints: MapEngine.build(events),
       dashboard: Dashboard.build(events)
     };

@@ -1,8 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import { migrateObservatoryData } from "../data-migration";
+import { migrateObservatoryData, normalizeAIObservationResult } from "../data-migration";
 import type {
   AIObservationResult,
   GlobalCollectionLog,
+  HistoricalImportSession,
   GlobalLearningSignal,
   GlobalObservedEvent,
   GlobalSourceConnector,
@@ -116,16 +117,19 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
       raw_text: draft.rawText,
       data: draft
     }));
-    const aiResults = (migrated.aiObservationResults ?? []).map((result) => ({
-      id: ownerScopedId(ownerId, result.id),
-      owner_id: ownerId,
-      provider: result.provider,
-      model: result.model,
-      status: result.status,
-      created_at: result.createdAt,
-      updated_at: now,
-      data: result
-    }));
+    const aiResults = (migrated.aiObservationResults ?? []).map((result) => {
+      const normalized = normalizeAIObservationResult(result, now);
+      return {
+        id: ownerScopedId(ownerId, normalized.id),
+        owner_id: ownerId,
+        provider: normalized.provider,
+        model: normalized.model,
+        status: normalized.status,
+        created_at: normalized.createdAt,
+        updated_at: now,
+        data: normalized
+      };
+    });
     await upsertOrSkip(this.client, "observatory_profiles", profile, "owner_id");
     await upsertOrSkip(this.client, "studies", studies, "id");
     await upsertOrSkip(this.client, "observation_records", observations, "id");
@@ -148,24 +152,28 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
     await upsertOrSkip(this.client, "global_study_suggestions", rows.globalSuggestions, "id");
     await upsertOrSkip(this.client, "global_learning_signals", rows.globalLearningSignals, "id");
     await upsertOrSkip(this.client, "global_collection_logs", rows.globalCollectionLogs, "id");
+    await upsertOrSkip(this.client, "historical_import_sessions", rows.historicalImportSessions, "id");
   }
 
   private async loadGlobalObservatory(ownerId: string, fallback?: ObservatoryData["globalObservatory"]) {
-    const [globalSourcesResult, globalEventsResult, globalLearningResult, globalLogsResult] = await Promise.all([
+    const [globalSourcesResult, globalEventsResult, globalLearningResult, globalLogsResult, historicalImportsResult] = await Promise.all([
       this.client.from("global_sources").select("data").eq("owner_id", ownerId).limit(200),
       this.client.from("global_events").select("data").eq("owner_id", ownerId).order("updated_at", { ascending: false }).limit(300),
       this.client.from("global_learning_signals").select("data").eq("owner_id", ownerId).order("created_at", { ascending: false }).limit(300),
-      this.client.from("global_collection_logs").select("data").eq("owner_id", ownerId).order("started_at", { ascending: false }).limit(100)
+      this.client.from("global_collection_logs").select("data").eq("owner_id", ownerId).order("started_at", { ascending: false }).limit(100),
+      this.client.from("historical_import_sessions").select("data").eq("owner_id", ownerId).order("updated_at", { ascending: false }).limit(100)
     ]);
     throwIfError(globalSourcesResult.error, "veille mondiale/global_sources");
     throwIfError(globalEventsResult.error, "veille mondiale/global_events");
     throwIfError(globalLearningResult.error, "veille mondiale/global_learning_signals");
     throwIfError(globalLogsResult.error, "veille mondiale/global_collection_logs");
+    throwIfError(historicalImportsResult.error, "veille mondiale/historical_import_sessions");
     const globalSources = ((globalSourcesResult.data ?? []) as Array<{ data: GlobalSourceConnector }>).map((row) => row.data);
     const globalEvents = ((globalEventsResult.data ?? []) as Array<{ data: GlobalObservedEvent }>).map((row) => row.data);
     const globalLearningSignals = ((globalLearningResult.data ?? []) as Array<{ data: GlobalLearningSignal }>).map((row) => row.data);
     const globalCollectionLogs = ((globalLogsResult.data ?? []) as Array<{ data: GlobalCollectionLog }>).map((row) => row.data);
-    if (!globalEvents.length && !globalSources.length) return fallback;
+    const historicalImports = ((historicalImportsResult.data ?? []) as Array<{ data: HistoricalImportSession }>).map((row) => row.data);
+    if (!globalEvents.length && !globalSources.length && !historicalImports.length) return fallback;
     return migrateObservatoryData({
       version: 1,
       ownerId,
@@ -188,6 +196,7 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
               topStudyEvents: [],
               trends: []
             },
+            historicalImports,
             lastCollectedAt: globalCollectionLogs[0]?.completedAt
           })
         : fallback
@@ -343,6 +352,20 @@ function buildGlobalRows(global: NonNullable<ObservatoryData["globalObservatory"
       ambiguous_merges: log.ambiguousMerges,
       data: log
     }));
+    const historicalImportSessions = (global.historicalImports ?? []).map((session) => ({
+      id: ownerScopedId(ownerId, session.id),
+      owner_id: ownerId,
+      status: session.status,
+      started_at: session.startedAt,
+      updated_at: session.updatedAt,
+      completed_at: session.completedAt,
+      range_start: session.request.range.startDate,
+      range_end: session.request.range.endDate,
+      articles_fetched: session.progress.articlesFetched,
+      events_created: session.progress.eventsCreated,
+      errors: session.progress.errors,
+      data: session
+    }));
 
   return {
     globalSources,
@@ -355,7 +378,8 @@ function buildGlobalRows(global: NonNullable<ObservatoryData["globalObservatory"
     globalClaimSources,
     globalSuggestions,
     globalLearningSignals,
-    globalCollectionLogs
+    globalCollectionLogs,
+    historicalImportSessions
   };
 }
 

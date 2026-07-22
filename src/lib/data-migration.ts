@@ -1,4 +1,5 @@
 import type {
+  AIObservationResult,
   HistoryEntry,
   ObservationAnalysisDraft,
   LongitudinalObservationComparison,
@@ -14,6 +15,7 @@ import { GlobalObservatory } from "./global-observatory";
 import { extractCanonicalDimensions } from "./parser/DimensionExtractor";
 
 export const CURRENT_SCHEMA_VERSION = 5 as const;
+export const LEGACY_AI_PROVIDER = defaultAISettings.provider;
 
 export function migrateObservatoryData(input: ObservatoryData): ObservatoryData {
   const now = new Date().toISOString();
@@ -23,10 +25,10 @@ export function migrateObservatoryData(input: ObservatoryData): ObservatoryData 
     ownerId: input.ownerId,
     createdAt: input.createdAt ?? now,
     updatedAt: input.updatedAt ?? now,
-    studies: input.studies.map(normalizeStudy),
-    observationDrafts: input.observationDrafts ?? [],
+    studies: input.studies.map((study) => normalizeStudy(study, now)),
+    observationDrafts: (input.observationDrafts ?? []).map((draft) => normalizeObservationDraft(draft, now)),
     aiSettings: { ...defaultAISettings, ...(input.aiSettings ?? {}) },
-    aiObservationResults: input.aiObservationResults ?? [],
+    aiObservationResults: (input.aiObservationResults ?? []).map((result) => normalizeAIObservationResult(result, now)),
     theories: input.theories?.length ? input.theories : createInitialTheories(),
     theoryRevisionProposals: input.theoryRevisionProposals ?? [],
     theoryPredictions: input.theoryPredictions ?? [],
@@ -35,27 +37,148 @@ export function migrateObservatoryData(input: ObservatoryData): ObservatoryData 
     globalObservatory: GlobalObservatory.refresh({
       ...GlobalObservatory.initialState(now),
       ...(input.globalObservatory ?? {}),
-      collectionLogs: input.globalObservatory?.collectionLogs ?? []
+      collectionLogs: input.globalObservatory?.collectionLogs ?? [],
+      historicalImports: input.globalObservatory?.historicalImports ?? []
     })
   };
 }
 
-export function normalizeStudy(study: Study): Study {
+export function normalizeAIObservationResult(result: AIObservationResult, now = new Date().toISOString()): AIObservationResult {
+  const legacy = result as AIObservationResult & {
+    provider?: AIObservationResult["provider"] | null;
+    model?: string | null;
+    status?: AIObservationResult["status"] | null;
+    tokenUsage?: AIObservationResult["tokenUsage"] | null;
+    latency?: number | null;
+    createdAt?: string | null;
+    promptHash?: string | null;
+  };
+  const provider = legacy.provider || LEGACY_AI_PROVIDER;
+  const model = legacy.model || defaultAISettings.model;
+  const status = legacy.status ?? (legacy.response ? "success" : "error");
+  const createdAt = legacy.createdAt || now;
+  const promptHash = legacy.promptHash || hash(`${result.id}-${model}-${createdAt}`);
+  return {
+    ...result,
+    promptHash,
+    provider,
+    model,
+    createdAt,
+    response: result.response ?? null,
+    tokenUsage: legacy.tokenUsage ?? {},
+    latency: legacy.latency ?? 0,
+    status
+  };
+}
+
+export function normalizeStudy(study: Study, now = new Date().toISOString()): Study {
+  const legacy = study as Study & {
+    title?: string | null;
+    description?: string | null;
+    subject?: string | null;
+    startDate?: string | null;
+    status?: string | null;
+    currentLevel?: string | null;
+    notes?: string | null;
+    createdAt?: string | null;
+    updatedAt?: string | null;
+  };
+  const createdAt = legacy.createdAt || now;
+  const updatedAt = legacy.updatedAt || createdAt;
   return {
     ...study,
+    title: legacy.title || "Etude importee",
+    description: legacy.description ?? "",
+    subject: legacy.subject ?? "Sujet importe",
+    startDate: legacy.startDate || createdAt.slice(0, 10),
+    status: legacy.status || "Observation ouverte",
+    currentLevel: legacy.currentLevel || legacy.status || "Observation ouverte",
+    notes: legacy.notes ?? "",
     openQuestions: study.openQuestions ?? [],
     structuredHistory: study.structuredHistory ?? legacyHistory(study),
     relationProposals: study.relationProposals ?? [],
     deltaScores: study.deltaScores ?? [],
-    observations: (study.observations ?? []).map((record) => ({
-      ...record,
-      ownerId: record.ownerId ?? study.ownerId,
-      detectedDimensions: record.detectedDimensions?.length ? record.detectedDimensions : extractCanonicalDimensions(record)
-    })),
+    observations: (study.observations ?? []).map((record) => normalizeObservationRecord(record, study, now)),
     longitudinalComparisons: (study.longitudinalComparisons ?? []).map((comparison) => normalizeLongitudinalComparison(comparison, study.id)),
     multidimensionalChanges: study.multidimensionalChanges ?? [],
     studySyntheses: study.studySyntheses ?? [],
-    activeStudySynthesisId: study.activeStudySynthesisId ?? study.studySyntheses?.[0]?.id
+    activeStudySynthesisId: study.activeStudySynthesisId ?? study.studySyntheses?.[0]?.id,
+    createdAt,
+    updatedAt
+  };
+}
+
+function normalizeObservationDraft(draft: ObservationAnalysisDraft, now: string): ObservationAnalysisDraft {
+  const legacy = draft as ObservationAnalysisDraft & {
+    rawText?: string | null;
+    status?: ObservationAnalysisDraft["status"] | null;
+    createdAt?: string | null;
+    methodologicalStatus?: ObservationAnalysisDraft["methodologicalStatus"] | null;
+    conclusion?: string | null;
+  };
+  return {
+    ...draft,
+    rawText: legacy.rawText ?? "",
+    detectedPeople: draft.detectedPeople ?? [],
+    detectedManifestations: draft.detectedManifestations ?? [],
+    detectedEmotions: draft.detectedEmotions ?? [],
+    detectedCatalysts: draft.detectedCatalysts ?? [],
+    detectedConcepts: draft.detectedConcepts ?? [],
+    chronology: draft.chronology ?? [],
+    relationProposals: draft.relationProposals ?? [],
+    confirmationQuestions: draft.confirmationQuestions ?? [],
+    analysisWarnings: draft.analysisWarnings ?? [],
+    createdAt: legacy.createdAt || now,
+    status: legacy.status ?? "draft",
+    methodologicalStatus: legacy.methodologicalStatus ?? "Observation ouverte",
+    conclusion: legacy.conclusion ?? ""
+  };
+}
+
+function normalizeObservationRecord(record: ObservationRecord, study: Study, now: string): ObservationRecord {
+  const legacy = record as ObservationRecord & {
+    rawText?: string | null;
+    status?: ObservationRecord["status"] | null;
+    createdAt?: string | null;
+    updatedAt?: string | null;
+  };
+  const createdAt = legacy.createdAt || now;
+  const normalized = {
+    ...record,
+    ownerId: record.ownerId ?? study.ownerId,
+    studyId: record.studyId || study.id,
+    rawText: legacy.rawText ?? "",
+    createdAt,
+    updatedAt: legacy.updatedAt || createdAt,
+    status: legacy.status ?? "active",
+    detectedPeople: record.detectedPeople ?? [],
+    detectedManifestations: record.detectedManifestations ?? [],
+    detectedEmotions: record.detectedEmotions ?? [],
+    detectedCatalysts: record.detectedCatalysts ?? [],
+    detectedConcepts: record.detectedConcepts ?? [],
+    detectedRelations: record.detectedRelations ?? [],
+    acceptedProposalIds: record.acceptedProposalIds ?? [],
+    editedProposalIds: record.editedProposalIds ?? [],
+    rejectedProposalIds: record.rejectedProposalIds ?? [],
+    validationHistory: record.validationHistory ?? [],
+    generatedManifestationIds: record.generatedManifestationIds ?? [],
+    generatedEmotionIds: record.generatedEmotionIds ?? [],
+    generatedCatalystIds: record.generatedCatalystIds ?? [],
+    generatedRelationIds: record.generatedRelationIds ?? [],
+    generatedStateIds: record.generatedStateIds ?? [],
+    generatedTransitionIds: record.generatedTransitionIds ?? [],
+    generatedRecognitionIds: record.generatedRecognitionIds ?? [],
+    generatedTimelineEventIds: record.generatedTimelineEventIds ?? [],
+    generatedDeltaIds: record.generatedDeltaIds ?? [],
+    enginesExecuted: record.enginesExecuted ?? [],
+    engineResultsSummary: record.engineResultsSummary ?? [],
+    methodologicalWarnings: record.methodologicalWarnings ?? [],
+    sourceExcerpts: record.sourceExcerpts ?? [],
+    openQuestions: record.openQuestions ?? []
+  };
+  return {
+    ...normalized,
+    detectedDimensions: normalized.detectedDimensions?.length ? normalized.detectedDimensions : extractCanonicalDimensions(normalized)
   };
 }
 
@@ -289,8 +412,10 @@ function validationEntry(date: string, action: "proposition acceptee" | "proposi
 }
 
 function legacyHistory(study: Study): HistoryEntry[] {
-  return study.history.map((summary, index) =>
-    historyEntry(study.createdAt, "import", "study", `${study.id}-legacy-${index}`, summary)
+  const date = study.createdAt ?? new Date().toISOString();
+  const history = study.history ?? [];
+  return history.map((summary, index) =>
+    historyEntry(date, "import", "study", `${study.id}-legacy-${index}`, summary)
   );
 }
 

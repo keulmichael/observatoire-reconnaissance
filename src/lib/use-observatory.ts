@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { repository } from "./repository";
-import type { GlobalCollectionReport, ObservationAnalysisDraft, ObservatoryData, Study, TheoryEvidenceRelation, TheoryPrediction, TheoryRevisionProposal } from "./types";
+import type { GlobalCollectionReport, HistoricalImportRequest, HistoricalImportSession, ObservationAnalysisDraft, ObservatoryData, Study, TheoryEvidenceRelation, TheoryPrediction, TheoryRevisionProposal } from "./types";
 import { downloadJson } from "./analytics";
 import { addObservationToStudy, constructScientificStudy } from "./parser/ScientificConstruction";
 import { migrateObservatoryData, normalizeStudy } from "./data-migration";
@@ -336,6 +336,29 @@ export function useObservatory() {
     return payload.report;
   }
 
+  async function runHistoricalImport(input: { request?: HistoricalImportRequest; sessionId?: string; command?: "run" | "pause" }) {
+    const response = await fetch("/api/global-observatory/historical-import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        state: data.globalObservatory ?? GlobalObservatory.initialState(),
+        request: input.request,
+        sessionId: input.sessionId,
+        command: input.command ?? "run"
+      })
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      state?: NonNullable<ObservatoryData["globalObservatory"]>;
+      session?: HistoricalImportSession;
+      error?: string;
+    };
+    if (!response.ok || !payload.state || !payload.session) {
+      throw new Error(payload.error ?? "Import historique impossible.");
+    }
+    setData((current) => ({ ...current, globalObservatory: payload.state }));
+    return payload.session;
+  }
+
   function analyzeGlobalEvent(eventId: string) {
     setData((current) => ({
       ...current,
@@ -486,6 +509,7 @@ export function useObservatory() {
     linkPredictionObservation,
     generateStudySynthesis,
     collectGlobalEvents,
+    runHistoricalImport,
     analyzeGlobalEvent,
     setGlobalSourceEnabled,
     createStudyFromGlobalEvent,

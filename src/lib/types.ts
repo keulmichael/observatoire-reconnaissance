@@ -19,6 +19,7 @@ export type AppView =
   | "recognitions"
   | "timeline"
   | "analysis"
+  | "local-diagnostics"
   | "theory-lab"
   | "recognition-theorem"
   | "reflexive-cycle"
@@ -325,7 +326,13 @@ export type GlobalSourceType =
   | "podcast"
   | "pdf-report"
   | "official-document"
-  | "social-publication";
+  | "social-publication"
+  | "event-database"
+  | "international-organization"
+  | "geopolitical-data"
+  | "economic-data"
+  | "environmental-data"
+  | "historical-api";
 
 export type GlobalEventCategory =
   | "Individu"
@@ -382,7 +389,80 @@ export interface GlobalCollectionLog {
   duplicateArticles: number;
   mergedArticles: number;
   ambiguousMerges: number;
-  mode: "manual" | "cron" | "test";
+  mode: "manual" | "cron" | "test" | "historical";
+}
+
+export type HistoricalImportGranularity = "day" | "week" | "month" | "year" | "custom";
+export type HistoricalImportStatus = "planned" | "running" | "paused" | "completed" | "failed" | "cancelled";
+
+export interface HistoricalImportRange {
+  granularity: HistoricalImportGranularity;
+  startDate: string;
+  endDate: string;
+}
+
+export interface HistoricalImportRequest {
+  range: HistoricalImportRange;
+  sourceIds: string[];
+  batchSize: number;
+  maxArticles?: number;
+}
+
+export interface HistoricalImportProgress {
+  cursorDate: string;
+  cursorSourceIndex: number;
+  processedDays: number;
+  totalDays: number;
+  processedSources: number;
+  totalSources: number;
+  articlesFetched: number;
+  eventsCreated: number;
+  mergedArticles: number;
+  duplicateArticles: number;
+  errors: number;
+  percent: number;
+  estimatedRemainingMs: number;
+}
+
+export interface HistoricalImportLogEntry {
+  id: string;
+  at: string;
+  level: "info" | "warning" | "error";
+  message: string;
+  sourceId?: string;
+  date?: string;
+}
+
+export interface HistoricalImportSession {
+  id: string;
+  status: HistoricalImportStatus;
+  request: HistoricalImportRequest;
+  progress: HistoricalImportProgress;
+  startedAt: string;
+  updatedAt: string;
+  completedAt?: string;
+  error?: string;
+  logs: HistoricalImportLogEntry[];
+}
+
+export interface HistoricalObservatoryStatistics {
+  eventsByMonth: Array<{ label: string; value: number }>;
+  eventsByCountry: Array<{ label: string; value: number }>;
+  eventsByCategory: Array<{ label: string; value: number }>;
+  eventsBySource: Array<{ label: string; value: number }>;
+  eventsByTheme: Array<{ label: string; value: number }>;
+  eventsByConfidence: Array<{ label: string; value: number }>;
+}
+
+export interface HistoricalSearchFilters {
+  query: string;
+  country: string;
+  category: string;
+  sourceId: string;
+  importance: string;
+  confidence: string;
+  startDate?: string;
+  endDate?: string;
 }
 
 export interface GlobalCollectionReport extends GlobalCollectionLog {
@@ -541,6 +621,7 @@ export interface GlobalObservatoryState {
   mapPoints: GlobalMapPoint[];
   dashboard: GlobalDashboardMetrics;
   collectionLogs: GlobalCollectionLog[];
+  historicalImports?: HistoricalImportSession[];
   lastCollectedAt?: string;
   lastAnalyzedAt?: string;
 }

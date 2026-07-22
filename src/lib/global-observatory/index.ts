@@ -1,6 +1,7 @@
 export { Dashboard } from "./Dashboard";
 export { DeduplicationEngine } from "./DeduplicationEngine";
 export { GlobalObservatory } from "./GlobalObservatory";
+export { HistoricalImportEngine } from "./HistoricalImportEngine";
 export { InterestScorer } from "./InterestScorer";
 export { LearningEngine } from "./LearningEngine";
 export { MapEngine } from "./MapEngine";

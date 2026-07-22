@@ -60,6 +60,65 @@ export class SourceManager {
         categories: ["Politique", "Justice", "Santé", "Éducation", "Environnement"],
         updateFrequencyMinutes: 720,
         notes: "Connecteur pret pour ONU, OMS, UNESCO et institutions publiques."
+      },
+      {
+        id: "source-gdelt",
+        name: "GDELT",
+        type: "event-database",
+        enabled: true,
+        endpoint: "https://api.gdeltproject.org/api/v2/doc/doc",
+        reliability: 0.78,
+        countries: ["Monde"],
+        categories: ["Politique", "Guerre", "Société", "Économie"],
+        updateFrequencyMinutes: 1440,
+        notes: "Base mondiale d'evenements et d'articles. Connecteur historique extensible."
+      },
+      {
+        id: "source-reliefweb",
+        name: "ReliefWeb / OCHA",
+        type: "geopolitical-data",
+        enabled: true,
+        endpoint: "https://api.reliefweb.int/v1/reports",
+        reliability: 0.86,
+        countries: ["Monde"],
+        categories: ["Guerre", "Santé", "Environnement", "Société"],
+        updateFrequencyMinutes: 1440,
+        notes: "Crises humanitaires, deplacements, catastrophes et rapports OCHA."
+      },
+      {
+        id: "source-usgs",
+        name: "USGS",
+        type: "environmental-data",
+        enabled: true,
+        endpoint: "https://earthquake.usgs.gov/fdsnws/event/1/query",
+        reliability: 0.9,
+        countries: ["Monde"],
+        categories: ["Environnement", "Science"],
+        updateFrequencyMinutes: 1440,
+        notes: "Evenements geophysiques historiques. Connecteur officiel extensible."
+      },
+      {
+        id: "source-world-bank",
+        name: "Banque Mondiale",
+        type: "economic-data",
+        enabled: true,
+        endpoint: "https://api.worldbank.org/v2",
+        reliability: 0.88,
+        countries: ["Monde"],
+        categories: ["Économie", "Éducation", "Santé", "Environnement"],
+        updateFrequencyMinutes: 1440,
+        notes: "Indicateurs economiques et sociaux sur longue periode."
+      },
+      {
+        id: "source-news-archives",
+        name: "Archives presse mondiale",
+        type: "historical-api",
+        enabled: true,
+        reliability: 0.7,
+        countries: ["Monde"],
+        categories: ["Politique", "Société", "Économie", "Guerre", "Culture"],
+        updateFrequencyMinutes: 1440,
+        notes: "Famille de connecteurs pour Reuters, AP, BBC, France24, Guardian, Al Jazeera, DW, NHK, Event Registry, Wikinews, MediaStack et NewsAPI selon licences disponibles."
       }
     ];
   }
@@ -82,6 +141,7 @@ export class SourceManager {
         trends: []
       },
       collectionLogs: [],
+      historicalImports: [],
       lastCollectedAt: now
     };
   }
