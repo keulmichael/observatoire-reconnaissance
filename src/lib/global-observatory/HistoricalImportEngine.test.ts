@@ -230,6 +230,68 @@ describe("HistoricalImportEngine", () => {
     expect(page.coverage?.windows?.[0].status).toBe("truncated");
   });
 
+  it("ne declare pas une couverture complete quand maxArticles interrompt la plage", async () => {
+    const source = SourceManager.defaultSources().find((item) => item.id === "source-gdelt")!;
+    const state = { ...SourceManager.createInitialState(), sources: [source] };
+    const result = await HistoricalImportEngine.runNextBatch(state, {
+      request: {
+        range: { granularity: "day", startDate: "2026-01-01", endDate: "2026-01-01" },
+        sourceIds: [source.id],
+        batchSize: 1,
+        maxArticles: 1
+      },
+      registry: {
+        [source.id]: {
+          id: source.id,
+          async fetchPage(input) {
+            return {
+              articles: [{
+                id: stableId("article", "cap-test"),
+                externalId: "cap-test",
+                connectorId: source.id,
+                connectorName: source.name,
+                title: "Capped article",
+                url: "https://example.com/capped",
+                publishedAt: `${input.date}T01:00:00.000Z`,
+                country: "Monde",
+                language: "fr",
+                summary: "Article avant limite.",
+                authors: [],
+                excerpts: [{ id: "excerpt-cap", text: "Article avant limite.", location: "test", claimIds: [] }],
+                collectedAt: input.now,
+                collectionMode: "historical",
+                provenance: { kind: "real", connector: source.id }
+              }],
+              nextCursor: "2026-01-01T06:00:00.000Z",
+              coverage: {
+                completeCoverage: false,
+                estimatedCoverageLevel: "partial",
+                maxRecordsPerCall: 250,
+                windows: [{
+                  key: "2026-01-01T00:00:00.000Z/2026-01-01T06:00:00.000Z",
+                  sourceId: source.id,
+                  start: "2026-01-01T00:00:00.000Z",
+                  end: "2026-01-01T06:00:00.000Z",
+                  levelMinutes: 360,
+                  received: 1,
+                  maxRecords: 250,
+                  status: "complete"
+                }]
+              }
+            };
+          }
+        }
+      },
+      now: "2026-01-08T00:00:00.000Z"
+    });
+
+    expect(result.session.status).toBe("completed");
+    expect(result.session.progress.completeCoverage).toBe(false);
+    expect(result.session.progress.estimatedCoverageLevel).toBe("partial");
+    expect(result.session.logs[0].message).toContain("Import termine");
+    expect(result.session.logs.some((entry) => entry.message.includes("maxArticles"))).toBe(true);
+  });
+
   it("distingue donnees historiques reelles et simulees", async () => {
     const sources = SourceManager.defaultSources();
     const simulated = await new DeterministicHistoricalConnector().fetchPage({

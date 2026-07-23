@@ -165,6 +165,9 @@ export class HistoricalImportEngine {
     }
 
     nextSession = finalizeProgress(nextSession, now);
+    if (reachedArticleLimit(nextSession) && nextSession.progress.percent < 100) {
+      nextSession = markCoverageLimitedByArticleCap(nextSession, now);
+    }
     if (nextSession.progress.percent >= 100 || batchPlan.length === 0 || reachedArticleLimit(nextSession)) {
       nextSession = {
         ...nextSession,
@@ -594,6 +597,21 @@ function finalizeProgress(session: HistoricalImportSession, now: string): Histor
 
 function reachedArticleLimit(session: HistoricalImportSession) {
   return Boolean(session.request.maxArticles && session.progress.articlesFetched >= session.request.maxArticles);
+}
+
+function markCoverageLimitedByArticleCap(session: HistoricalImportSession, now: string): HistoricalImportSession {
+  return {
+    ...session,
+    progress: {
+      ...session.progress,
+      completeCoverage: false,
+      estimatedCoverageLevel: session.progress.truncatedWindows?.length ? "incomplete" : "partial"
+    },
+    logs: [
+      log("warning", "Couverture partielle: la limite maxArticles a interrompu l'import avant la fin de la plage demandee.", now),
+      ...session.logs
+    ]
+  };
 }
 
 function remainingArticleLimit(session: HistoricalImportSession) {
