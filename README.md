@@ -52,9 +52,19 @@ npm run build
 - `src/components` : carte reflexive, graphiques et composants UI locaux.
 - `src/lib/types.ts` : modele de donnees TypeScript.
 - `src/lib/repository.ts` et `src/lib/repositories/*` : abstraction repository, cache local, Supabase et synchronisation.
+- `src/lib/global-observatory/*` : Observatoire mondial, veille temps reel RSS, import historique, fusion, analyse reflexive, suggestions d'etudes et apprentissage.
 - `src/lib/engines/MultidimensionalChangeEngine.ts` : comparaison multidimensionnelle prudente.
 - `supabase/migrations/` : schema PostgreSQL, index, RLS et Storage prive.
 - `docs/` : stockage, schema, securite, portee d'analyse et guide utilisateur.
+
+## Observatoire mondial
+
+Deux modes sont separes :
+
+- Veille temps reel : collecte RSS quotidienne, actualisation manuelle ou cron, nouveaux articles recents.
+- Import historique : import par jour, semaine, mois, annee ou periode personnalisee, par batch, avec pause/reprise, journal d'erreurs, statistiques et recherche.
+
+L'import historique utilise `HistoricalImportEngine`. Les connecteurs sont extensibles pour GDELT, Event Registry, Wikinews, MediaStack, NewsAPI, Reuters/AP/BBC/France24/Guardian/Al Jazeera/DW/NHK, ONU, OMS, NASA, NOAA, Copernicus, USGS, ACLED, ReliefWeb/OCHA, FMI, Banque Mondiale et OCDE selon les droits d'acces disponibles.
 
 ## Persistance des donnees
 

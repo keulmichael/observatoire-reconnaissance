@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -43,7 +43,7 @@ import {
   compareStates,
   exportStudy
 } from "@/lib/analytics";
-import type { AIConnectionStatus, AIObservationResult, AppView, GlobalCollectionReport, GlobalObservedEvent, GlobalObservatoryState, ObservationAISettings, ObservationAnalysisDraft, Study, StudySynthesis, TheoryEvidenceRelation, TheoryRevisionProposal, TransitionStage } from "@/lib/types";
+import type { AIConnectionStatus, AIObservationResult, AppView, GlobalCollectionReport, GlobalObservedEvent, GlobalObservatoryState, HistoricalImportRequest, HistoricalImportSession, HistoricalObservatoryStatistics, HistoricalSearchFilters, ObservationAISettings, ObservationAnalysisDraft, Study, StudySynthesis, TheoryEvidenceRelation, TheoryRevisionProposal, TransitionStage } from "@/lib/types";
 import { RecognitionCharts } from "@/components/recognition-charts";
 import { ObservationAnalysis } from "@/components/journal/ObservationAnalysis";
 import { ObservationFollowup } from "@/components/journal/ObservationFollowup";
@@ -68,6 +68,15 @@ import {
   type LongitudinalEditPatch
 } from "@/lib/longitudinal-review";
 import { synthesisFilename } from "@/lib/engines/study-synthesis";
+import {
+  buildLocalStorageBackup,
+  diagnoseBrowserStorage,
+  OBSERVATORY_STORAGE_KEYS,
+  type LocalStorageDiagnosticEntry
+} from "@/lib/local-storage-diagnostics";
+import { HistoricalImportEngine } from "@/lib/global-observatory/HistoricalImportEngine";
+import { eventProvenanceStatus, provenanceLabel, sourceProvenanceStatus } from "@/lib/global-observatory/Provenance";
+import type { LocalMigrationDiagnostic } from "@/lib/local-migration-diagnostics";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "journal", label: "Journal d'Observation", icon: ClipboardList },
@@ -88,6 +97,7 @@ const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
   { id: "recognitions", label: "Reconnaissances", icon: Search },
   { id: "timeline", label: "Chronologie", icon: CalendarDays },
   { id: "analysis", label: "Analyse", icon: BarChart3 },
+  { id: "local-diagnostics", label: "Diagnostic local", icon: FileText },
   { id: "theory-lab", label: "Laboratoire theorique", icon: Microscope },
   { id: "recognition-theorem", label: "Theoreme de la Reconnaissance", icon: GitBranch },
   { id: "reflexive-cycle", label: "Cycle reflexif", icon: RefreshCw },
@@ -152,6 +162,7 @@ export default function ObservatoryApp() {
     linkPredictionObservation,
     generateStudySynthesis,
     collectGlobalEvents,
+    runHistoricalImport,
     analyzeGlobalEvent,
     setGlobalSourceEnabled,
     createStudyFromGlobalEvent,
@@ -166,7 +177,9 @@ export default function ObservatoryApp() {
     signUp,
     signOut,
     migrationSummary,
-    migrateLocalToRemote
+    compareLocalWithRemote,
+    migrateLocalToRemote,
+    removeLocalBackup
   } = useObservatory();
   const [view, setView] = useState<AppView>("journal");
   const [query, setQuery] = useState("");
@@ -286,7 +299,9 @@ export default function ObservatoryApp() {
             onSignUp={signUp}
             onSignOut={signOut}
             migrationSummary={migrationSummary}
+            onCompare={compareLocalWithRemote}
             onMigrate={migrateLocalToRemote}
+            onRemoveLocalBackup={removeLocalBackup}
           />
           <nav className="grid gap-1" aria-label="Navigation principale">
             {views.map((item) => {
@@ -394,6 +409,7 @@ export default function ObservatoryApp() {
             <GlobalWatch
               state={data.globalObservatory}
               onCollect={collectGlobalEvents}
+              onHistoricalImport={runHistoricalImport}
               onAnalyze={analyzeGlobalEvent}
               onCreateStudy={(eventId) => {
                 const studyId = createStudyFromGlobalEvent(eventId);
@@ -445,6 +461,7 @@ export default function ObservatoryApp() {
               <Analysis analysis={analysis} />
             </>
           )}
+          {view === "local-diagnostics" && <LocalDiagnosticsView />}
           {view === "theory-lab" && (
             <TheoryLab
               data={data}
@@ -495,6 +512,177 @@ export default function ObservatoryApp() {
         </aside>
       </div>
     </main>
+  );
+}
+
+function LocalDiagnosticsView() {
+  const [entries, setEntries] = useState<LocalStorageDiagnosticEntry[]>([]);
+  const [scannedAt, setScannedAt] = useState("");
+  const [scanError, setScanError] = useState("");
+
+  async function refresh() {
+    setScanError("");
+    try {
+      const result = await diagnoseBrowserStorage();
+      setEntries(result);
+      setScannedAt(new Date().toISOString());
+    } catch (error) {
+      setScanError(error instanceof Error ? error.message : "Diagnostic local impossible.");
+    }
+  }
+
+  function exportBackup() {
+    const backup = buildLocalStorageBackup(entries);
+    const blob = new Blob([JSON.stringify(backup, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `observatoire-diagnostic-local-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  useEffect(() => {
+    void refresh();
+  }, []);
+
+  const presentEntries = entries.filter((entry) => entry.present);
+  const totals = presentEntries.reduce(
+    (sum, entry) => ({
+      studies: sum.studies + entry.studies,
+      observations: sum.observations + entry.observations,
+      drafts: sum.drafts + entry.drafts
+    }),
+    { studies: 0, observations: 0, drafts: 0 }
+  );
+  const personalCandidates = entries.filter((entry) =>
+    entry.present
+    && entry.likelyObservatoryData
+    && !entry.technicalOnly
+    && !entry.ownerIds.some((ownerId) => ownerId.startsWith("obs-"))
+    && (entry.studies > 0 || entry.observations > 0 || entry.drafts > 0)
+  );
+
+  return (
+    <div className="grid gap-4">
+      <Panel title="Diagnostic local non destructif">
+        <div className="grid gap-3 text-sm leading-6 text-stone-300">
+          <p>
+            Cette vue lit les stockages locaux candidats sur ce navigateur. Elle ne migre rien, ne supprime rien et ne modifie pas la base.
+          </p>
+          <div className="grid gap-2 rounded-md border border-white/10 bg-white/[0.04] p-3 text-xs text-stone-300">
+            <p className="font-medium text-white">Cles localStorage connues ou historiques recherchees</p>
+            <p className="break-all">{OBSERVATORY_STORAGE_KEYS.join(", ")}</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-3">
+            <StatCard label="Etudes detectees" value={totals.studies} />
+            <StatCard label="Observations detectees" value={totals.observations} />
+            <StatCard label="Brouillons detectes" value={totals.drafts} />
+          </div>
+          {personalCandidates.length ? (
+            <p className="rounded-md border border-gold/30 bg-gold/10 p-3 text-goldSoft">
+              Donnees candidates trouvees hors comptes techniques obs-*. Exportez une sauvegarde avant toute migration manuelle.
+            </p>
+          ) : (
+            <p className="rounded-md border border-white/10 bg-white/[0.04] p-3 text-stone-300">
+              Aucune donnee personnelle candidate n&apos;est identifiee dans les cles lisibles. Les cles techniques Supabase/auth restent separees.
+            </p>
+          )}
+          <div className="flex flex-wrap gap-2">
+            <button className="flex items-center gap-2 rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200" onClick={() => void refresh()}>
+              <RefreshCw className="h-3.5 w-3.5" aria-hidden /> Relire le stockage
+            </button>
+            <button className="flex items-center gap-2 rounded-md border border-gold/30 px-3 py-2 text-xs text-goldSoft" disabled={!presentEntries.length} onClick={exportBackup}>
+              <Download className="h-3.5 w-3.5" aria-hidden /> Exporter sauvegarde JSON
+            </button>
+          </div>
+          {scanError ? <p className="text-xs text-amber-200">{scanError}</p> : null}
+          {scannedAt ? <p className="text-xs text-stone-500">Derniere lecture : {scannedAt}</p> : null}
+        </div>
+      </Panel>
+
+      <div className="grid gap-3">
+        {entries.map((entry) => (
+          <Panel key={`${entry.storage}:${entry.key}`} title={entry.key}>
+            <div className="grid gap-3 text-sm text-stone-300">
+              <div className="flex flex-wrap gap-2">
+                <Badge>{entry.storage}</Badge>
+                <Badge>{entry.present ? "Presente" : "Absente"}</Badge>
+                <Badge>{entry.readable ? "JSON lisible" : "Non JSON"}</Badge>
+                <Badge>{entry.technicalOnly ? "Technique" : "Donnees candidates"}</Badge>
+                <Badge>{entry.bytes} caracteres</Badge>
+                {entry.schemaVersion ? <Badge>schema {entry.schemaVersion}</Badge> : null}
+                {entry.version ? <Badge>version {entry.version}</Badge> : null}
+              </div>
+              {entry.parseError ? <p className="text-xs text-amber-200">{entry.parseError}</p> : null}
+              <div className="grid gap-3 md:grid-cols-3">
+                <StatCard label="Etudes" value={entry.studies} />
+                <StatCard label="Observations" value={entry.observations} />
+                <StatCard label="Brouillons" value={entry.drafts} />
+              </div>
+              {entry.ownerIds.length ? (
+                <p className="break-all text-xs text-stone-400">OwnerId detectes : {entry.ownerIds.join(", ")}</p>
+              ) : null}
+              {entry.preview.length ? (
+                <div className="overflow-x-auto rounded-md border border-white/10">
+                  <table className="w-full min-w-[640px] text-left text-xs">
+                    <thead className="bg-white/[0.04] text-stone-400">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Titre</th>
+                        <th className="px-3 py-2 font-medium">Creation</th>
+                        <th className="px-3 py-2 font-medium">Mise a jour</th>
+                        <th className="px-3 py-2 font-medium">Observations</th>
+                        <th className="px-3 py-2 font-medium">Owner</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entry.preview.map((study, index) => (
+                        <tr key={`${entry.key}-${study.id ?? index}`} className="border-t border-white/10">
+                          <td className="px-3 py-2 text-stone-100">{study.title}</td>
+                          <td className="px-3 py-2">{study.createdAt ?? "-"}</td>
+                          <td className="px-3 py-2">{study.updatedAt ?? "-"}</td>
+                          <td className="px-3 py-2">{study.observations}</td>
+                          <td className="px-3 py-2">{study.ownerId ?? "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+              {entry.draftPreview.length ? (
+                <div className="overflow-x-auto rounded-md border border-white/10">
+                  <table className="w-full min-w-[520px] text-left text-xs">
+                    <thead className="bg-white/[0.04] text-stone-400">
+                      <tr>
+                        <th className="px-3 py-2 font-medium">Brouillon</th>
+                        <th className="px-3 py-2 font-medium">Creation</th>
+                        <th className="px-3 py-2 font-medium">Mise a jour</th>
+                        <th className="px-3 py-2 font-medium">Owner</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {entry.draftPreview.map((draft, index) => (
+                        <tr key={`${entry.key}-draft-${draft.id ?? index}`} className="border-t border-white/10">
+                          <td className="px-3 py-2 text-stone-100">{draft.title}</td>
+                          <td className="px-3 py-2">{draft.createdAt ?? "-"}</td>
+                          <td className="px-3 py-2">{draft.updatedAt ?? "-"}</td>
+                          <td className="px-3 py-2">{draft.ownerId ?? "-"}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : null}
+            </div>
+          </Panel>
+        ))}
+        {!presentEntries.length ? (
+          <Panel title="Aucune cle candidate">
+            <p className="text-sm text-stone-300">Aucune cle locale presente liee a l&apos;Observatoire n&apos;a ete detectee sur cette origine.</p>
+          </Panel>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -1074,7 +1262,9 @@ function AuthPanel({
   onSignUp,
   onSignOut,
   migrationSummary,
-  onMigrate
+  onCompare,
+  onMigrate,
+  onRemoveLocalBackup
 }: {
   configured: boolean;
   userEmail: string | null;
@@ -1084,32 +1274,137 @@ function AuthPanel({
   onSignUp: (email: string, password: string) => Promise<void>;
   onSignOut: () => Promise<void>;
   migrationSummary: () => { hasLocalData: boolean; studies: number; observations: number; drafts: number; exportData: unknown };
+  onCompare: () => Promise<LocalMigrationDiagnostic>;
   onMigrate: () => Promise<unknown>;
+  onRemoveLocalBackup: () => Promise<unknown>;
 }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [notice, setNotice] = useState("");
   const [busy, setBusy] = useState(false);
+  const [diagnostic, setDiagnostic] = useState<LocalMigrationDiagnostic | null>(null);
+  const [diagnosticLoading, setDiagnosticLoading] = useState(false);
   const summary = migrationSummary();
+  const migrationRisk = summarizeMigrationExport(summary.exportData);
 
-  async function run(action: "signin" | "signup" | "migrate" | "signout") {
+  useEffect(() => {
+    let cancelled = false;
+    async function refreshDiagnostic() {
+      if (!configured || !userEmail || !summary.hasLocalData) {
+        setDiagnostic(null);
+        return;
+      }
+      setDiagnosticLoading(true);
+      try {
+        const result = await onCompare();
+        if (!cancelled) setDiagnostic(result);
+      } catch {
+        if (!cancelled) setDiagnostic(null);
+      } finally {
+        if (!cancelled) setDiagnosticLoading(false);
+      }
+    }
+    void refreshDiagnostic();
+    return () => {
+      cancelled = true;
+    };
+  }, [configured, onCompare, summary.hasLocalData, summary.observations, summary.studies, summary.drafts, userEmail]);
+
+  async function exportLocalBackup(prefix: string) {
+    const blob = new Blob([JSON.stringify(summary.exportData, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `${prefix}-${new Date().toISOString().slice(0, 10)}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  async function refreshComparison() {
+    setBusy(true);
+    setNotice("");
+    try {
+      const result = await onCompare();
+      setDiagnostic(result);
+      setNotice(migrationStatusNotice(result));
+    } catch (error) {
+      setNotice(error instanceof Error ? error.message : "Comparaison impossible.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function removeLocalCopy() {
+    const latest = await onCompare();
+    setDiagnostic(latest);
+    if (!latest.canDeleteLocal) {
+      throw new Error("Suppression locale bloquee : les donnees correspondantes ne sont pas confirmees dans Supabase.");
+    }
+    const confirmation = window.prompt(
+      [
+        "Confirmez la suppression de la copie locale uniquement.",
+        "Les donnees Supabase ne seront pas supprimees.",
+        "Tapez SUPPRIMER LA COPIE LOCALE pour continuer."
+      ].join("\n")
+    );
+    if (confirmation !== "SUPPRIMER LA COPIE LOCALE") {
+      setNotice("Suppression locale annulee.");
+      return;
+    }
+    await exportLocalBackup("observatoire-dernier-export-avant-suppression-locale");
+    await onRemoveLocalBackup();
+    setDiagnostic(null);
+    setNotice("Copie locale supprimee. Aucune donnee Supabase n'a ete supprimee.");
+  }
+
+  async function run(action: "signin" | "signup" | "migrate" | "signout" | "compare" | "export" | "remove-local") {
     setBusy(true);
     setNotice("");
     try {
       if (action === "signin") await onSignIn(email, password);
       if (action === "signup") await onSignUp(email, password);
+      if (action === "compare") {
+        await refreshComparison();
+        return;
+      }
+      if (action === "export") {
+        await exportLocalBackup("observatoire-sauvegarde-locale");
+        setNotice("Sauvegarde JSON exportee.");
+      }
+      if (action === "remove-local") {
+        await removeLocalCopy();
+        return;
+      }
       if (action === "migrate") {
-        const blob = new Blob([JSON.stringify(summary.exportData, null, 2)], { type: "application/json" });
-        const url = URL.createObjectURL(blob);
-        const link = document.createElement("a");
-        link.href = url;
-        link.download = `observatoire-export-avant-migration-${new Date().toISOString().slice(0, 10)}.json`;
-        link.click();
-        URL.revokeObjectURL(url);
+        if (migrationRisk.hasObsTechnicalData) {
+          throw new Error("Migration bloquee : des ownerId obs-* ont ete detectes dans les donnees locales.");
+        }
+        const latest = await onCompare();
+        setDiagnostic(latest);
+        if (!latest.canMigrateMissing) {
+          throw new Error("Migration bloquee : aucune donnee locale manquante n'a ete detectee.");
+        }
+        const confirmed = window.confirm(
+          [
+            `Confirmer l'import des donnees locales manquantes vers ${userEmail ?? "le compte connecte"} ?`,
+            `${latest.missing.studies} etude(s), ${latest.missing.observations} observation(s), ${latest.missing.drafts} brouillon(s) manquant(s).`,
+            migrationRisk.duplicateIds ? `${migrationRisk.duplicateIds} doublon(s) d'identifiant detecte(s) localement.` : "Aucun doublon d'identifiant local detecte.",
+            "Une sauvegarde JSON sera telechargee avant l'import. Aucun import integral aveugle ne sera lance."
+          ].join("\n")
+        );
+        if (!confirmed) {
+          setNotice("Migration annulee. Aucune donnee n'a ete importee.");
+          return;
+        }
+        await exportLocalBackup("observatoire-export-avant-migration");
         await onMigrate();
+        const refreshed = await onCompare();
+        setDiagnostic(refreshed);
       }
       if (action === "signout") await onSignOut();
-      setNotice(action === "migrate" ? "Migration terminee. Les donnees locales sont conservees jusqu'a suppression explicite." : "Operation terminee.");
+      setNotice(action === "migrate"
+        ? `Import termine vers ${userEmail ?? "le compte connecte"}. Les donnees locales sont conservees jusqu'a suppression explicite.`
+        : "Operation terminee.");
     } catch (error) {
       setNotice(error instanceof Error ? error.message : "Operation impossible.");
     } finally {
@@ -1134,10 +1429,36 @@ function AuthPanel({
           <button className="flex items-center justify-center gap-2 rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200" disabled={busy} onClick={() => void run("signout")}>
             <LogOut className="h-3.5 w-3.5" aria-hidden /> Deconnexion
           </button>
-          {summary.hasLocalData ? (
-            <button className="rounded-md border border-gold/30 px-3 py-2 text-xs text-goldSoft" disabled={busy} onClick={() => void run("migrate")}>
-              Migrer mes donnees locales vers mon compte ({summary.studies} etude(s), {summary.observations} observation(s))
+          {diagnosticLoading ? <p className="text-xs leading-5 text-stone-400">Comparaison de la sauvegarde locale avec le compte...</p> : null}
+          {diagnostic?.status === "already-migrated" ? (
+            <div className="rounded-md border border-emerald-400/30 bg-emerald-500/10 p-3">
+              <p className="text-xs font-semibold text-emerald-100">Sauvegarde locale conservee</p>
+              <p className="mt-1 text-xs leading-5 text-emerald-50/90">Ces donnees ont deja ete migrees vers votre compte. La copie locale est conservee comme sauvegarde.</p>
+            </div>
+          ) : null}
+          {diagnostic?.status === "local-new-data" || diagnostic?.status === "partial-difference" || diagnostic?.status === "migration-incomplete" ? (
+            <p className="rounded-md border border-amber-300/30 bg-amber-400/10 p-3 text-xs font-semibold text-amber-100">Nouvelles donnees locales detectees</p>
+          ) : null}
+          {summary.hasLocalData && diagnostic?.canMigrateMissing ? (
+            <button className="rounded-md border border-gold/30 px-3 py-2 text-xs text-goldSoft disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || migrationRisk.hasObsTechnicalData} onClick={() => void run("migrate")}>
+              Importer les donnees locales manquantes ({diagnostic.missing.studies} etude(s), {diagnostic.missing.observations} observation(s))
             </button>
+          ) : null}
+          {summary.hasLocalData && diagnostic ? (
+            <div className="grid grid-cols-1 gap-2">
+              <button className="rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200 disabled:opacity-50" disabled={busy} onClick={() => void run("compare")}>Comparer avec le compte</button>
+              <button className="rounded-md border border-white/10 px-3 py-2 text-xs text-stone-200 disabled:opacity-50" disabled={busy} onClick={() => void run("export")}>Exporter la sauvegarde JSON</button>
+              <button className="rounded-md border border-red-400/30 px-3 py-2 text-xs text-red-100 disabled:cursor-not-allowed disabled:opacity-50" disabled={busy || !diagnostic.canDeleteLocal} onClick={() => void run("remove-local")}>Supprimer la copie locale</button>
+            </div>
+          ) : null}
+          {migrationRisk.hasObsTechnicalData ? (
+            <p className="text-xs leading-5 text-amber-200">Migration bloquee : des donnees techniques obs-* sont presentes dans le cache local courant.</p>
+          ) : null}
+          {diagnostic?.status === "migrated-to-other-owner" ? (
+            <p className="text-xs leading-5 text-amber-200">Cette sauvegarde locale a deja ete migree vers un autre compte. L&apos;import automatique est bloque.</p>
+          ) : null}
+          {migrationRisk.duplicateIds ? (
+            <p className="text-xs leading-5 text-amber-200">{migrationRisk.duplicateIds} doublon(s) d&apos;identifiant detecte(s) avant migration.</p>
           ) : null}
         </div>
       ) : (
@@ -1162,6 +1483,48 @@ function syncLabel(status: string) {
   if (status === "offline") return "Hors ligne";
   if (status === "error") return "Erreur de synchronisation";
   return "Cache local";
+}
+
+function migrationStatusNotice(diagnostic: LocalMigrationDiagnostic) {
+  if (diagnostic.status === "already-migrated") return "La sauvegarde locale correspond au compte.";
+  if (diagnostic.status === "remote-empty") return "Le compte ne contient pas encore ces donnees locales.";
+  if (diagnostic.status === "local-new-data") return "Nouvelles donnees locales detectees.";
+  if (diagnostic.status === "partial-difference") return "Differences partielles detectees entre la copie locale et le compte.";
+  if (diagnostic.status === "migration-incomplete") return "Derniere migration incomplete : seuls les elements manquants seront proposes.";
+  if (diagnostic.status === "migrated-to-other-owner") return "Cette sauvegarde a deja ete migree vers un autre compte.";
+  return "Aucune donnee locale a comparer.";
+}
+
+function summarizeMigrationExport(value: unknown) {
+  const studies = arrayFromField(value, "studies");
+  const drafts = arrayFromField(value, "observationDrafts");
+  const studyIds = studies.map((study) => stringFromField(study, "id")).filter(Boolean);
+  const draftIds = drafts.map((draft) => stringFromField(draft, "id")).filter(Boolean);
+  const ownerIds = [
+    stringFromField(value, "ownerId"),
+    ...studies.flatMap((study) => [
+      stringFromField(study, "ownerId"),
+      ...arrayFromField(study, "observations").map((observation) => stringFromField(observation, "ownerId"))
+    ]),
+    ...drafts.map((draft) => stringFromField(draft, "ownerId"))
+  ].filter(Boolean);
+  const ids = [...studyIds, ...draftIds];
+  return {
+    hasObsTechnicalData: ownerIds.some((ownerId) => ownerId?.startsWith("obs-")),
+    duplicateIds: ids.length - new Set(ids).size
+  };
+}
+
+function arrayFromField(value: unknown, field: string): Array<Record<string, unknown>> {
+  if (value === null || typeof value !== "object") return [];
+  const item = (value as Record<string, unknown>)[field];
+  return Array.isArray(item) ? item.filter((entry): entry is Record<string, unknown> => entry !== null && typeof entry === "object") : [];
+}
+
+function stringFromField(value: unknown, field: string) {
+  if (value === null || typeof value !== "object") return undefined;
+  const item = (value as Record<string, unknown>)[field];
+  return typeof item === "string" ? item : undefined;
 }
 
 function AnalysisScope({ scope, study, studies = [] }: { scope: "selected" | "all"; study?: Study; studies?: Study[] }) {
@@ -1367,6 +1730,7 @@ function Toggle({ label, checked, onChange }: { label: string; checked: boolean;
 function GlobalWatch({
   state,
   onCollect,
+  onHistoricalImport,
   onAnalyze,
   onCreateStudy,
   onAbandon,
@@ -1374,12 +1738,14 @@ function GlobalWatch({
 }: {
   state?: GlobalObservatoryState;
   onCollect: () => Promise<GlobalCollectionReport>;
+  onHistoricalImport: (input: { request?: HistoricalImportRequest; sessionId?: string; command?: "run" | "pause" }) => Promise<HistoricalImportSession>;
   onAnalyze: (eventId: string) => void;
   onCreateStudy: (eventId: string) => void;
   onAbandon: (eventId: string) => void;
   onToggleSource: (sourceId: string, enabled: boolean) => void;
 }) {
   const [collecting, setCollecting] = useState(false);
+  const [mode, setMode] = useState<"realtime" | "historical">("realtime");
   const [collectionReport, setCollectionReport] = useState<GlobalCollectionReport | null>(null);
   const [collectionError, setCollectionError] = useState("");
   const [sourceFilter, setSourceFilter] = useState("all");
@@ -1402,7 +1768,8 @@ function GlobalWatch({
       topStudyEvents: [],
       trends: []
     },
-    collectionLogs: []
+    collectionLogs: [],
+    historicalImports: []
   };
   const filteredEvents = observatory.events.filter((event) =>
     (sourceFilter === "all" || event.sources.some((source) => source.connectorId === sourceFilter))
@@ -1426,32 +1793,45 @@ function GlobalWatch({
             </p>
             <div className="mt-3 flex flex-wrap gap-2">
               <Badge>NewsCollector</Badge>
+              <Badge>HistoricalImportEngine</Badge>
               <Badge>SourceManager</Badge>
               <Badge>ReflexiveAnalyzer</Badge>
               <Badge>LearningEngine</Badge>
             </div>
           </div>
-          <button
-            className="flex items-center justify-center gap-2 rounded-md bg-gold px-3 py-2 text-sm font-semibold text-night disabled:cursor-not-allowed disabled:opacity-60"
-            disabled={collecting}
-            onClick={async () => {
-              setCollecting(true);
-              setCollectionError("");
-              try {
-                setCollectionReport(await onCollect());
-              } catch (error) {
-                setCollectionError(error instanceof Error ? error.message : "Collecte impossible.");
-              } finally {
-                setCollecting(false);
-              }
-            }}
-          >
-            <RefreshCw className={`h-4 w-4 ${collecting ? "animate-spin" : ""}`} aria-hidden /> Actualiser les actualites
-          </button>
+          <div className="grid gap-2">
+            <div className="flex rounded-md border border-white/10 bg-white/[0.04] p-1">
+              <button className={`rounded px-3 py-2 text-sm ${mode === "realtime" ? "bg-gold text-night" : "text-stone-200"}`} onClick={() => setMode("realtime")}>Temps reel</button>
+              <button className={`rounded px-3 py-2 text-sm ${mode === "historical" ? "bg-gold text-night" : "text-stone-200"}`} onClick={() => setMode("historical")}>Import historique</button>
+            </div>
+            {mode === "realtime" ? (
+              <button
+                className="flex items-center justify-center gap-2 rounded-md bg-gold px-3 py-2 text-sm font-semibold text-night disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={collecting}
+                onClick={async () => {
+                  setCollecting(true);
+                  setCollectionError("");
+                  try {
+                    setCollectionReport(await onCollect());
+                  } catch (error) {
+                    setCollectionError(error instanceof Error ? error.message : "Collecte impossible.");
+                  } finally {
+                    setCollecting(false);
+                  }
+                }}
+              >
+                <RefreshCw className={`h-4 w-4 ${collecting ? "animate-spin" : ""}`} aria-hidden /> Actualiser les actualites
+              </button>
+            ) : null}
+          </div>
         </div>
       </Panel>
 
-      {collectionReport || collectionError || observatory.collectionLogs[0] ? (
+      {mode === "historical" ? (
+        <HistoricalImportDashboard state={observatory} onHistoricalImport={onHistoricalImport} />
+      ) : null}
+
+      {mode === "realtime" && (collectionReport || collectionError || observatory.collectionLogs[0]) ? (
         <Panel title="Derniere collecte">
           {collectionError ? <p className="mb-3 rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">{collectionError}</p> : null}
           <CollectionReport report={collectionReport ?? observatory.collectionLogs[0]} />
@@ -1550,6 +1930,332 @@ function GlobalWatch({
   );
 }
 
+function HistoricalImportDashboard({
+  state,
+  onHistoricalImport
+}: {
+  state: GlobalObservatoryState;
+  onHistoricalImport: (input: { request?: HistoricalImportRequest; sessionId?: string; command?: "run" | "pause" }) => Promise<HistoricalImportSession>;
+}) {
+  const today = new Date().toISOString().slice(0, 10);
+  const [granularity, setGranularity] = useState<HistoricalImportRequest["range"]["granularity"]>("year");
+  const [startDate, setStartDate] = useState("2026-01-01");
+  const [endDate, setEndDate] = useState("2026-12-31");
+  const [batchSize, setBatchSize] = useState(24);
+  const [maxArticles, setMaxArticles] = useState(360);
+  const [sourceIds, setSourceIds] = useState<string[]>(state.sources.filter((source) => source.enabled).map((source) => source.id));
+  const [running, setRunning] = useState(false);
+  const [error, setError] = useState("");
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(state.historicalImports?.[0]?.id ?? null);
+  const [filters, setFilters] = useState<HistoricalSearchFilters>({
+    query: "",
+    country: "all",
+    category: "all",
+    sourceId: "all",
+    importance: "all",
+    confidence: "all",
+    startDate: "",
+    endDate: ""
+  });
+  const activeSession = state.historicalImports?.find((session) => session.id === activeSessionId) ?? state.historicalImports?.[0];
+  const statistics = HistoricalImportEngine.statistics(state);
+  const results = HistoricalImportEngine.search(state, filters).slice(0, 80);
+  const countries = [...new Set(state.events.map((event) => event.country ?? "Monde"))].sort();
+  const categories = [...new Set(state.events.flatMap((event) => event.categories))].sort();
+  const importance = [...new Set(state.events.map((event) => event.interest?.level).filter(Boolean))].sort();
+  const selectedSources = state.sources.filter((source) => sourceIds.includes(source.id));
+  const hasSimulatedSelectedSources = selectedSources.some((source) => source.id !== "source-gdelt");
+  const provenanceCounts = countProvenance(state.events);
+
+  function applyPreset(next: HistoricalImportRequest["range"]["granularity"]) {
+    setGranularity(next);
+    if (next === "day") setEndDate(startDate);
+    if (next === "week") setEndDate(addDaysForUi(startDate, 6));
+    if (next === "month") setEndDate(`${startDate.slice(0, 7)}-28`);
+    if (next === "year") {
+      const year = startDate.slice(0, 4) || today.slice(0, 4);
+      setStartDate(`${year}-01-01`);
+      setEndDate(`${year}-12-31`);
+    }
+  }
+
+  async function run(sessionId?: string) {
+    setRunning(true);
+    setError("");
+    try {
+      const request: HistoricalImportRequest = {
+        range: { granularity, startDate, endDate },
+        sourceIds,
+        batchSize,
+        maxArticles
+      };
+      const session = await onHistoricalImport(sessionId ? { sessionId } : { request });
+      setActiveSessionId(session.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Import historique impossible.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  async function pause(sessionId: string) {
+    setRunning(true);
+    setError("");
+    try {
+      const session = await onHistoricalImport({ sessionId, command: "pause" });
+      setActiveSessionId(session.id);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Interruption impossible.");
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <div className="grid gap-4">
+      <Panel title="Import historique">
+        <div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
+          <div className="grid gap-3">
+            {hasSimulatedSelectedSources ? (
+              <div className="rounded-md border border-amber-300/35 bg-amber-400/10 p-3 text-sm leading-6 text-amber-100">
+                <p className="font-medium">Mode demonstration</p>
+                <p>Mode demonstration - aucune archive externe reelle interrogee. Les connecteurs selectionnes hors GDELT generent des donnees de test deterministes.</p>
+              </div>
+            ) : null}
+            <div className="grid gap-3 md:grid-cols-5">
+              {(["day", "week", "month", "year", "custom"] as const).map((item) => (
+                <button key={item} className={`rounded-md border px-3 py-2 text-sm ${granularity === item ? "border-gold/70 bg-gold/10 text-goldSoft" : "border-white/10 text-stone-200"}`} onClick={() => applyPreset(item)}>
+                  {historicalGranularityLabel(item)}
+                </button>
+              ))}
+            </div>
+            <div className="grid gap-3 md:grid-cols-4">
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-stone-200">Debut</span>
+                <input className="w-full rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white" type="date" value={startDate} onChange={(event) => setStartDate(event.target.value)} />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-stone-200">Fin</span>
+                <input className="w-full rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white" type="date" value={endDate} onChange={(event) => setEndDate(event.target.value)} />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-stone-200">Batch</span>
+                <input className="w-full rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white" type="number" min={1} max={50} value={batchSize} onChange={(event) => setBatchSize(Number(event.target.value))} />
+              </label>
+              <label className="grid gap-2">
+                <span className="text-sm font-medium text-stone-200">Limite articles</span>
+                <input className="w-full rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white" type="number" min={1} max={500000} value={maxArticles} onChange={(event) => setMaxArticles(Number(event.target.value))} />
+              </label>
+            </div>
+            <div className="grid gap-2">
+              <p className="text-xs uppercase tracking-[0.18em] text-stone-500">Connecteurs historiques</p>
+              <div className="grid gap-2 md:grid-cols-2">
+                {state.sources.map((source) => (
+                  <label key={source.id} className="flex items-start gap-2 rounded-md border border-white/10 bg-white/[0.04] p-3 text-sm text-stone-200">
+                    <input
+                      className="mt-1"
+                      type="checkbox"
+                      checked={sourceIds.includes(source.id)}
+                      onChange={(event) => {
+                        setSourceIds((current) => event.target.checked
+                          ? [...new Set([...current, source.id])]
+                          : current.filter((id) => id !== source.id));
+                      }}
+                    />
+                    <span>
+                      <span className="flex flex-wrap items-center gap-2 text-white">
+                        {source.name}
+                        <Badge>{source.id === "source-gdelt" ? "Reel" : "Simulation"}</Badge>
+                      </span>
+                      <span className="block text-xs text-stone-500">{source.type} - {source.notes ?? "Connecteur extensible."}</span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button className="flex items-center gap-2 rounded-md bg-gold px-3 py-2 text-sm font-semibold text-night disabled:opacity-60" disabled={running || !sourceIds.length} onClick={() => void run()}>
+                <Import className="h-4 w-4" aria-hidden /> Lancer un batch historique
+              </button>
+              {activeSession && activeSession.status !== "completed" ? (
+                <>
+                  <button className="rounded-md border border-white/10 px-3 py-2 text-sm text-stone-200 disabled:opacity-60" disabled={running} onClick={() => void run(activeSession.id)}>Reprendre</button>
+                  <button className="rounded-md border border-red-400/30 px-3 py-2 text-sm text-red-100 disabled:opacity-60" disabled={running} onClick={() => void pause(activeSession.id)}>Interrompre</button>
+                </>
+              ) : null}
+            </div>
+            {error ? <p className="rounded-md border border-red-400/30 bg-red-500/10 p-3 text-sm text-red-100">{error}</p> : null}
+          </div>
+
+          <HistoricalProgressPanel session={activeSession} />
+        </div>
+      </Panel>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        <StatCard label="Articles historiques" value={activeSession?.progress.articlesFetched ?? 0} />
+        <StatCard label="Evenements historiques" value={activeSession?.progress.eventsCreated ?? 0} />
+        <StatCard label="Sources selectionnees" value={sourceIds.length} />
+        <StatCard label="Progression" value={`${activeSession?.progress.percent ?? 0}%`} />
+        <StatCard label="Erreurs" value={activeSession?.progress.errors ?? 0} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatCard label="Articles reels marques" value={provenanceCounts.real} />
+        <StatCard label="Articles simules marques" value={provenanceCounts.simulated} />
+        <StatCard label="Provenance non verifiable" value={provenanceCounts.unknown} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <StatCard label="Couverture complete" value={activeSession?.progress.completeCoverage === false ? "Non" : "Oui"} />
+        <StatCard label="Fenêtres tronquees" value={activeSession?.progress.truncatedWindows?.length ?? 0} />
+        <StatCard label="Fenêtres subdivisees" value={activeSession?.progress.subdividedWindows ?? 0} />
+        <StatCard label="MAXRECORDS GDELT" value={activeSession?.progress.maxRecordsPerCall ?? "n/a"} />
+      </div>
+      {activeSession?.progress.completeCoverage === false ? (
+        <div className="rounded-md border border-amber-300/35 bg-amber-400/10 p-3 text-sm leading-6 text-amber-100">
+          Couverture historique incomplete: au moins une fenêtre GDELT est restee saturee. Niveau estime: {activeSession.progress.estimatedCoverageLevel ?? "partial"}.
+        </div>
+      ) : null}
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <HistoricalStatisticsPanel statistics={statistics} />
+        <HistoricalLogPanel session={activeSession} />
+      </div>
+
+      <Panel title="Recherche historique">
+        <div className="mb-4 grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+          <label className="grid gap-2">
+            <span className="text-sm font-medium text-stone-200">Texte</span>
+            <input className="w-full rounded-md border border-white/10 bg-white/[0.05] px-3 py-2 text-sm text-white" value={filters.query} onChange={(event) => setFilters({ ...filters, query: event.target.value })} />
+          </label>
+          <SelectFilter label="Pays" value={filters.country} onChange={(value) => setFilters({ ...filters, country: value })} options={countries.map((country) => ({ value: country, label: country }))} />
+          <SelectFilter label="Categorie" value={filters.category} onChange={(value) => setFilters({ ...filters, category: value })} options={categories.map((category) => ({ value: category, label: category }))} />
+          <SelectFilter label="Source" value={filters.sourceId} onChange={(value) => setFilters({ ...filters, sourceId: value })} options={state.sources.map((source) => ({ value: source.id, label: source.name }))} />
+          <SelectFilter label="Importance" value={filters.importance} onChange={(value) => setFilters({ ...filters, importance: value })} options={importance.map((item) => ({ value: item ?? "", label: item ?? "" }))} />
+          <SelectFilter label="Confiance" value={filters.confidence} onChange={(value) => setFilters({ ...filters, confidence: value })} options={["Confiance elevee", "Confiance moyenne", "Confiance faible"].map((item) => ({ value: item, label: item }))} />
+        </div>
+        <div className="grid gap-3">
+          {results.length ? results.map((event) => (
+            <div key={event.id} className="rounded-md border border-white/10 bg-white/[0.04] p-3">
+              <div className="flex flex-wrap gap-2">
+                <Badge>{event.startedAt.slice(0, 10)}</Badge>
+                <Badge>{event.country ?? "Monde"}</Badge>
+                <Badge>{event.sources.length} source(s)</Badge>
+                <Badge>{eventProvenanceLabel(event)}</Badge>
+                {event.interest ? <Badge>{event.interest.level}</Badge> : null}
+              </div>
+              <p className="mt-2 font-medium text-white">{event.title}</p>
+              <p className="mt-1 text-sm leading-6 text-stone-300">{event.summary}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {event.sources.slice(0, 3).map((source) => (
+                  <Badge key={source.id}>{source.connectorName}: {sourceProvenanceLabel(source)}</Badge>
+                ))}
+              </div>
+            </div>
+          )) : <SmartEmpty text="Aucun evenement ne correspond aux filtres historiques." />}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function HistoricalProgressPanel({ session }: { session?: HistoricalImportSession }) {
+  if (!session) return <Panel title="Progression"><SmartEmpty text="Aucun import historique lance." /></Panel>;
+  return (
+    <Panel title="Progression">
+      <div className="grid gap-3">
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge>{session.status}</Badge>
+          <Badge>{session.request.range.startDate} - {session.request.range.endDate}</Badge>
+        </div>
+        <div className="h-3 overflow-hidden rounded-full bg-white/10">
+          <div className="h-full bg-gold" style={{ width: `${session.progress.percent}%` }} />
+        </div>
+        <p className="text-sm text-stone-300">{session.progress.percent}% - curseur {session.progress.cursorDate}, source {session.progress.cursorSourceIndex + 1}/{session.progress.totalSources}</p>
+        <p className="text-xs text-stone-500">Temps restant estime: {formatDuration(session.progress.estimatedRemainingMs)}</p>
+      </div>
+    </Panel>
+  );
+}
+
+function HistoricalStatisticsPanel({ statistics }: { statistics: HistoricalObservatoryStatistics }) {
+  return (
+    <Panel title="Statistiques historiques">
+      <div className="grid gap-4 md:grid-cols-2">
+        <MiniRank title="Par mois" items={statistics.eventsByMonth.slice(0, 8)} />
+        <MiniRank title="Par pays" items={statistics.eventsByCountry.slice(0, 8)} />
+        <MiniRank title="Par categorie" items={statistics.eventsByCategory.slice(0, 8)} />
+        <MiniRank title="Par source" items={statistics.eventsBySource.slice(0, 8)} />
+        <MiniRank title="Par theme" items={statistics.eventsByTheme.slice(0, 8)} />
+        <MiniRank title="Par confiance" items={statistics.eventsByConfidence.slice(0, 8)} />
+      </div>
+    </Panel>
+  );
+}
+
+function HistoricalLogPanel({ session }: { session?: HistoricalImportSession }) {
+  return (
+    <Panel title="Journal historique">
+      <div className="max-h-80 overflow-auto">
+        {session?.logs.length ? session.logs.slice(0, 80).map((entry) => (
+          <div key={entry.id} className="border-b border-white/10 py-2 text-sm">
+            <div className="flex flex-wrap gap-2">
+              <Badge>{entry.level}</Badge>
+              <span className="text-stone-500">{entry.at}</span>
+              {entry.sourceId ? <span className="text-stone-500">{entry.sourceId}</span> : null}
+            </div>
+            <p className="mt-1 text-stone-300">{entry.message}</p>
+          </div>
+        )) : <SmartEmpty text="Aucune entree de journal." />}
+      </div>
+    </Panel>
+  );
+}
+
+function historicalGranularityLabel(value: HistoricalImportRequest["range"]["granularity"]) {
+  const labels = {
+    day: "Journee",
+    week: "Semaine",
+    month: "Mois",
+    year: "Annee",
+    custom: "Personnalise"
+  };
+  return labels[value];
+}
+
+function countProvenance(events: GlobalObservedEvent[]) {
+  return events.flatMap((event) => event.sources).reduce(
+    (counts, source) => {
+      counts[sourceProvenanceKind(source)] += 1;
+      return counts;
+    },
+    { real: 0, simulated: 0, unknown: 0 }
+  );
+}
+
+function eventProvenanceLabel(event: GlobalObservedEvent) {
+  return provenanceLabel(eventProvenanceStatus(event));
+}
+
+function sourceProvenanceLabel(source: GlobalObservedEvent["sources"][number]) {
+  return provenanceLabel(sourceProvenanceStatus(source));
+}
+
+function sourceProvenanceKind(source: GlobalObservedEvent["sources"][number]): "real" | "simulated" | "unknown" {
+  return sourceProvenanceStatus(source);
+}
+
+function addDaysForUi(date: string, days: number) {
+  const value = new Date(`${date}T00:00:00.000Z`);
+  value.setUTCDate(value.getUTCDate() + days);
+  return value.toISOString().slice(0, 10);
+}
+
+function formatDuration(ms: number) {
+  if (!ms) return "non calcule";
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.ceil(minutes / 60)} h`;
+}
+
 function GlobalEventCard({
   event,
   onAnalyze,
@@ -1569,6 +2275,7 @@ function GlobalEventCard({
             <Badge>{event.status}</Badge>
             <Badge>{event.country ?? "Monde"}</Badge>
             <Badge>{event.sources.length} source(s)</Badge>
+            <Badge>{eventProvenanceLabel(event)}</Badge>
             {event.interest ? <Badge>{interestStars(event.interest.stars)} {event.interest.level}</Badge> : null}
           </div>
           <h3 className="mt-3 text-lg font-semibold text-white">{event.title}</h3>
@@ -1614,9 +2321,14 @@ function GlobalEventCard({
           <div className="mt-2 grid gap-2">
             {event.sources.map((source) => (
               <div key={source.id} className="rounded-md border border-white/10 bg-night/30 p-3">
-                <p className="text-sm font-medium text-white">{source.connectorName}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium text-white">{source.connectorName}</p>
+                  <Badge>{sourceProvenanceLabel(source)}</Badge>
+                  <Badge>{source.collectionMode ?? "mode inconnu"}</Badge>
+                </div>
                 <p className="mt-1 text-sm leading-6 text-stone-300">{source.title}</p>
                 {source.url ? <a className="mt-1 block text-xs text-goldSoft underline" href={source.url} target="_blank" rel="noreferrer">{source.url}</a> : null}
+                {source.provenance?.requestedUrl ? <p className="mt-1 break-all text-xs text-stone-500">Appel: {source.provenance.requestedUrl}</p> : null}
                 {source.excerpts.map((excerpt) => (
                   <p key={excerpt.id} className="mt-2 border-l border-gold/30 pl-3 text-xs leading-5 text-stone-400">{excerpt.text}</p>
                 ))}

@@ -3,14 +3,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Edge, Node } from "@xyflow/react";
 import { repository } from "./repository";
-import type { GlobalCollectionReport, ObservationAnalysisDraft, ObservatoryData, Study, TheoryEvidenceRelation, TheoryPrediction, TheoryRevisionProposal } from "./types";
+import type { LocalMigrationDiagnostic } from "./local-migration-diagnostics";
+import type { GlobalCollectionReport, HistoricalImportRequest, HistoricalImportSession, ObservationAnalysisDraft, ObservatoryData, Study, TheoryEvidenceRelation, TheoryPrediction, TheoryRevisionProposal } from "./types";
 import { downloadJson } from "./analytics";
 import { addObservationToStudy, constructScientificStudy } from "./parser/ScientificConstruction";
 import { migrateObservatoryData, normalizeStudy } from "./data-migration";
 import { formatStudyDeletionConfirmation } from "./study-deletion";
 import { buildTheoryEvidenceLink, TheoryEngine } from "./engines/TheoryEngine";
 import { StudySynthesisEngine } from "./engines/study-synthesis";
-import { GlobalObservatory, StudySuggestionEngine } from "./global-observatory";
+import { eventContainsUnverifiedData, GlobalObservatory, StudySuggestionEngine } from "./global-observatory";
 import type { SyncStatus } from "./repositories/SyncService";
 
 export function useObservatory() {
@@ -336,6 +337,29 @@ export function useObservatory() {
     return payload.report;
   }
 
+  async function runHistoricalImport(input: { request?: HistoricalImportRequest; sessionId?: string; command?: "run" | "pause" }) {
+    const response = await fetch("/api/global-observatory/historical-import", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        state: data.globalObservatory ?? GlobalObservatory.initialState(),
+        request: input.request,
+        sessionId: input.sessionId,
+        command: input.command ?? "run"
+      })
+    });
+    const payload = (await response.json().catch(() => ({}))) as {
+      state?: NonNullable<ObservatoryData["globalObservatory"]>;
+      session?: HistoricalImportSession;
+      error?: string;
+    };
+    if (!response.ok || !payload.state || !payload.session) {
+      throw new Error(payload.error ?? "Import historique impossible.");
+    }
+    setData((current) => ({ ...current, globalObservatory: payload.state }));
+    return payload.session;
+  }
+
   function analyzeGlobalEvent(eventId: string) {
     setData((current) => ({
       ...current,
@@ -364,6 +388,12 @@ export function useObservatory() {
       const globalObservatory = GlobalObservatory.refresh(current.globalObservatory ?? GlobalObservatory.initialState());
       const event = globalObservatory.events.find((item) => item.id === eventId);
       if (!event) return current;
+      if (eventContainsUnverifiedData(event)) {
+        const confirmed = window.confirm(
+          "Avertissement explicite: cet evenement contient des donnees simulees ou sans provenance verifiable. Confirmez-vous la creation d'une etude scientifique a partir de ces donnees marquees ?"
+        );
+        if (!confirmed) return current;
+      }
       const study = {
         ...StudySuggestionEngine.createStudy(event, now),
         ownerId: authUserId ?? undefined
@@ -449,14 +479,24 @@ export function useObservatory() {
     setSyncStatus("local-cache");
   }
 
-  async function migrateLocalToRemote() {
+  const migrateLocalToRemote = useCallback(async () => {
     if (!authUserId) throw new Error("Connexion requise avant migration.");
     const snapshot = await repository.migrateLocalToRemote(authUserId);
     setData(snapshot.data);
     setSyncStatus(snapshot.status);
     setSyncError(snapshot.error ?? snapshot.warning ?? "");
     return snapshot;
-  }
+  }, [authUserId]);
+
+  const compareLocalWithRemote = useCallback(async (): Promise<LocalMigrationDiagnostic> => {
+    if (!authUserId) throw new Error("Connexion requise avant comparaison.");
+    return repository.localMigrationDiagnostic(authUserId);
+  }, [authUserId]);
+
+  const removeLocalBackup = useCallback(async () => {
+    if (!authUserId) throw new Error("Connexion requise avant suppression locale.");
+    return repository.removeLocalBackup(authUserId);
+  }, [authUserId]);
 
   return {
     data,
@@ -486,6 +526,7 @@ export function useObservatory() {
     linkPredictionObservation,
     generateStudySynthesis,
     collectGlobalEvents,
+    runHistoricalImport,
     analyzeGlobalEvent,
     setGlobalSourceEnabled,
     createStudyFromGlobalEvent,
@@ -501,7 +542,9 @@ export function useObservatory() {
     signUp,
     signOut,
     migrationSummary: repository.migrationSummary,
+    compareLocalWithRemote,
     migrateLocalToRemote,
+    removeLocalBackup,
     persistNow
   };
 }
