@@ -297,7 +297,7 @@ export class GdeltHistoricalConnector implements HistoricalConnector {
     }
     const maxRecords = GDELT_MAX_RECORDS;
     const url = new URL(this.endpoint);
-    url.searchParams.set("query", "(recognition OR protest OR conflict OR government OR climate OR health OR education OR economy)");
+    url.searchParams.set("query", "(recognition OR recognized OR recognised OR acknowledged)");
     url.searchParams.set("mode", "artlist");
     url.searchParams.set("format", "json");
     url.searchParams.set("sort", "datedesc");
