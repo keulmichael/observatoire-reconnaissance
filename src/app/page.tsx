@@ -75,6 +75,7 @@ import {
   type LocalStorageDiagnosticEntry
 } from "@/lib/local-storage-diagnostics";
 import { HistoricalImportEngine } from "@/lib/global-observatory/HistoricalImportEngine";
+import { eventProvenanceStatus, provenanceLabel, sourceProvenanceStatus } from "@/lib/global-observatory/Provenance";
 import type { LocalMigrationDiagnostic } from "@/lib/local-migration-diagnostics";
 
 const views: Array<{ id: AppView; label: string; icon: React.ElementType }> = [
@@ -1962,6 +1963,9 @@ function HistoricalImportDashboard({
   const countries = [...new Set(state.events.map((event) => event.country ?? "Monde"))].sort();
   const categories = [...new Set(state.events.flatMap((event) => event.categories))].sort();
   const importance = [...new Set(state.events.map((event) => event.interest?.level).filter(Boolean))].sort();
+  const selectedSources = state.sources.filter((source) => sourceIds.includes(source.id));
+  const hasSimulatedSelectedSources = selectedSources.some((source) => source.id !== "source-gdelt");
+  const provenanceCounts = countProvenance(state.events);
 
   function applyPreset(next: HistoricalImportRequest["range"]["granularity"]) {
     setGranularity(next);
@@ -2012,6 +2016,12 @@ function HistoricalImportDashboard({
       <Panel title="Import historique">
         <div className="grid gap-4 xl:grid-cols-[1fr_0.9fr]">
           <div className="grid gap-3">
+            {hasSimulatedSelectedSources ? (
+              <div className="rounded-md border border-amber-300/35 bg-amber-400/10 p-3 text-sm leading-6 text-amber-100">
+                <p className="font-medium">Mode demonstration</p>
+                <p>Mode demonstration - aucune archive externe reelle interrogee. Les connecteurs selectionnes hors GDELT generent des donnees de test deterministes.</p>
+              </div>
+            ) : null}
             <div className="grid gap-3 md:grid-cols-5">
               {(["day", "week", "month", "year", "custom"] as const).map((item) => (
                 <button key={item} className={`rounded-md border px-3 py-2 text-sm ${granularity === item ? "border-gold/70 bg-gold/10 text-goldSoft" : "border-white/10 text-stone-200"}`} onClick={() => applyPreset(item)}>
@@ -2053,7 +2063,10 @@ function HistoricalImportDashboard({
                       }}
                     />
                     <span>
-                      <span className="block text-white">{source.name}</span>
+                      <span className="flex flex-wrap items-center gap-2 text-white">
+                        {source.name}
+                        <Badge>{source.id === "source-gdelt" ? "Reel" : "Simulation"}</Badge>
+                      </span>
                       <span className="block text-xs text-stone-500">{source.type} - {source.notes ?? "Connecteur extensible."}</span>
                     </span>
                   </label>
@@ -2085,6 +2098,22 @@ function HistoricalImportDashboard({
         <StatCard label="Progression" value={`${activeSession?.progress.percent ?? 0}%`} />
         <StatCard label="Erreurs" value={activeSession?.progress.errors ?? 0} />
       </div>
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatCard label="Articles reels marques" value={provenanceCounts.real} />
+        <StatCard label="Articles simules marques" value={provenanceCounts.simulated} />
+        <StatCard label="Provenance non verifiable" value={provenanceCounts.unknown} />
+      </div>
+      <div className="grid gap-3 sm:grid-cols-4">
+        <StatCard label="Couverture complete" value={activeSession?.progress.completeCoverage === false ? "Non" : "Oui"} />
+        <StatCard label="Fenêtres tronquees" value={activeSession?.progress.truncatedWindows?.length ?? 0} />
+        <StatCard label="Fenêtres subdivisees" value={activeSession?.progress.subdividedWindows ?? 0} />
+        <StatCard label="MAXRECORDS GDELT" value={activeSession?.progress.maxRecordsPerCall ?? "n/a"} />
+      </div>
+      {activeSession?.progress.completeCoverage === false ? (
+        <div className="rounded-md border border-amber-300/35 bg-amber-400/10 p-3 text-sm leading-6 text-amber-100">
+          Couverture historique incomplete: au moins une fenêtre GDELT est restee saturee. Niveau estime: {activeSession.progress.estimatedCoverageLevel ?? "partial"}.
+        </div>
+      ) : null}
 
       <div className="grid gap-4 xl:grid-cols-2">
         <HistoricalStatisticsPanel statistics={statistics} />
@@ -2110,10 +2139,16 @@ function HistoricalImportDashboard({
                 <Badge>{event.startedAt.slice(0, 10)}</Badge>
                 <Badge>{event.country ?? "Monde"}</Badge>
                 <Badge>{event.sources.length} source(s)</Badge>
+                <Badge>{eventProvenanceLabel(event)}</Badge>
                 {event.interest ? <Badge>{event.interest.level}</Badge> : null}
               </div>
               <p className="mt-2 font-medium text-white">{event.title}</p>
               <p className="mt-1 text-sm leading-6 text-stone-300">{event.summary}</p>
+              <div className="mt-2 flex flex-wrap gap-2">
+                {event.sources.slice(0, 3).map((source) => (
+                  <Badge key={source.id}>{source.connectorName}: {sourceProvenanceLabel(source)}</Badge>
+                ))}
+              </div>
             </div>
           )) : <SmartEmpty text="Aucun evenement ne correspond aux filtres historiques." />}
         </div>
@@ -2186,6 +2221,28 @@ function historicalGranularityLabel(value: HistoricalImportRequest["range"]["gra
   return labels[value];
 }
 
+function countProvenance(events: GlobalObservedEvent[]) {
+  return events.flatMap((event) => event.sources).reduce(
+    (counts, source) => {
+      counts[sourceProvenanceKind(source)] += 1;
+      return counts;
+    },
+    { real: 0, simulated: 0, unknown: 0 }
+  );
+}
+
+function eventProvenanceLabel(event: GlobalObservedEvent) {
+  return provenanceLabel(eventProvenanceStatus(event));
+}
+
+function sourceProvenanceLabel(source: GlobalObservedEvent["sources"][number]) {
+  return provenanceLabel(sourceProvenanceStatus(source));
+}
+
+function sourceProvenanceKind(source: GlobalObservedEvent["sources"][number]): "real" | "simulated" | "unknown" {
+  return sourceProvenanceStatus(source);
+}
+
 function addDaysForUi(date: string, days: number) {
   const value = new Date(`${date}T00:00:00.000Z`);
   value.setUTCDate(value.getUTCDate() + days);
@@ -2218,6 +2275,7 @@ function GlobalEventCard({
             <Badge>{event.status}</Badge>
             <Badge>{event.country ?? "Monde"}</Badge>
             <Badge>{event.sources.length} source(s)</Badge>
+            <Badge>{eventProvenanceLabel(event)}</Badge>
             {event.interest ? <Badge>{interestStars(event.interest.stars)} {event.interest.level}</Badge> : null}
           </div>
           <h3 className="mt-3 text-lg font-semibold text-white">{event.title}</h3>
@@ -2263,9 +2321,14 @@ function GlobalEventCard({
           <div className="mt-2 grid gap-2">
             {event.sources.map((source) => (
               <div key={source.id} className="rounded-md border border-white/10 bg-night/30 p-3">
-                <p className="text-sm font-medium text-white">{source.connectorName}</p>
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-sm font-medium text-white">{source.connectorName}</p>
+                  <Badge>{sourceProvenanceLabel(source)}</Badge>
+                  <Badge>{source.collectionMode ?? "mode inconnu"}</Badge>
+                </div>
                 <p className="mt-1 text-sm leading-6 text-stone-300">{source.title}</p>
                 {source.url ? <a className="mt-1 block text-xs text-goldSoft underline" href={source.url} target="_blank" rel="noreferrer">{source.url}</a> : null}
+                {source.provenance?.requestedUrl ? <p className="mt-1 break-all text-xs text-stone-500">Appel: {source.provenance.requestedUrl}</p> : null}
                 {source.excerpts.map((excerpt) => (
                   <p key={excerpt.id} className="mt-2 border-l border-gold/30 pl-3 text-xs leading-5 text-stone-400">{excerpt.text}</p>
                 ))}

@@ -411,6 +411,22 @@ export interface HistoricalImportRequest {
 export interface HistoricalImportProgress {
   cursorDate: string;
   cursorSourceIndex: number;
+  sourceCursors?: Record<string, string>;
+  completeCoverage?: boolean;
+  truncatedWindows?: string[];
+  subdividedWindows?: number;
+  estimatedCoverageLevel?: "complete" | "partial" | "incomplete";
+  maxRecordsPerCall?: number;
+  coverageWindows?: Array<{
+    key: string;
+    sourceId: string;
+    start: string;
+    end: string;
+    levelMinutes: number;
+    received: number;
+    maxRecords: number;
+    status: "complete" | "subdivided" | "truncated";
+  }>;
   processedDays: number;
   totalDays: number;
   processedSources: number;
@@ -492,6 +508,16 @@ export interface GlobalEventSource {
   authors: string[];
   excerpts: GlobalSourceExcerpt[];
   collectedAt: string;
+  collectionMode?: GlobalCollectionLog["mode"];
+  provenance?: {
+    kind: "real" | "simulated" | "unknown";
+    connector: string;
+    endpoint?: string;
+    requestedUrl?: string;
+    originalUrl?: string;
+    importSessionId?: string;
+    markers?: string[];
+  };
 }
 
 export interface GlobalTraceableClaim {

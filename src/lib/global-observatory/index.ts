@@ -8,6 +8,7 @@ export { MapEngine } from "./MapEngine";
 export { NewsClassifier } from "./NewsClassifier";
 export { NewsCollector } from "./NewsCollector";
 export { Normalization } from "./Normalization";
+export { eventContainsUnverifiedData, eventProvenanceStatus, provenanceLabel, provenanceStudyWarning, sourceProvenanceStatus } from "./Provenance";
 export { ReflexiveAnalyzer } from "./ReflexiveAnalyzer";
 export { SourceManager } from "./SourceManager";
 export { StudySuggestionEngine } from "./StudySuggestionEngine";

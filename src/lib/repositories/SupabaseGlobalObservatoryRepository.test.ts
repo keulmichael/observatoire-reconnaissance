@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { GlobalObservatory } from "../global-observatory";
+import { HistoricalImportEngine } from "../global-observatory/HistoricalImportEngine";
 import { SourceManager } from "../global-observatory/SourceManager";
 import { SupabaseObservatoryRepository } from "./SupabaseObservatoryRepository";
 
@@ -31,12 +32,22 @@ describe("SupabaseObservatoryRepository global observatory persistence", () => {
   it("persists global parents before relation tables", async () => {
     const calls: Array<{ table: string; rows: unknown[] }> = [];
     const repository = new SupabaseObservatoryRepository(upsertClient(calls));
-    const globalObservatory = GlobalObservatory.collect(SourceManager.createInitialState("2026-07-21T10:00:00.000Z"), undefined, "2026-07-21T10:00:00.000Z");
+    const globalObservatory = {
+      ...GlobalObservatory.collect(SourceManager.createInitialState("2026-07-21T10:00:00.000Z"), undefined, "2026-07-21T10:00:00.000Z"),
+      historicalImports: [
+        HistoricalImportEngine.createSession({
+          range: { granularity: "day", startDate: "2026-01-01", endDate: "2026-01-01" },
+          sourceIds: ["source-gdelt"],
+          batchSize: 10
+        }, "2026-07-21T10:00:00.000Z")
+      ]
+    };
 
     await repository.saveGlobalObservatory({ version: 1, studies: [], globalObservatory }, "owner-1");
 
     expect(calls.map((call) => call.table)).toEqual([
       "global_sources",
+      "historical_import_sessions",
       "global_articles",
       "global_events",
       "global_event_articles",

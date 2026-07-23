@@ -1,4 +1,5 @@
 import type { GlobalObservedEvent, GlobalStudySuggestion, Study } from "../types";
+import { provenanceStudyWarning } from "./Provenance";
 import { stableId } from "./utils";
 
 export class StudySuggestionEngine {
@@ -25,6 +26,7 @@ export class StudySuggestionEngine {
       return `- ${source.connectorName}: ${source.title}${link}`;
     });
     const hypotheses = event.analysis?.hypotheses ?? [];
+    const provenanceWarning = provenanceStudyWarning(event);
     return {
       id,
       title: event.studySuggestion?.title ?? `Etude: ${event.title}`,
@@ -42,11 +44,12 @@ export class StudySuggestionEngine {
       status: "Observation ouverte",
       currentLevel: "Observation ouverte",
       notes: [
+        provenanceWarning,
         `Evenement source: ${event.id}`,
         `Categories: ${event.categories.join(", ")}`,
         `Niveau d'interet: ${event.interest?.level ?? "Non score"}`,
         `Traçabilite: ${event.analysis?.claims.length ?? 0} claim(s), ${event.sourceIds.length} source(s).`
-      ].join("\n"),
+      ].filter(Boolean).join("\n"),
       states: [],
       manifestations: [
         {

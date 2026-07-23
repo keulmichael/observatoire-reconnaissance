@@ -11,7 +11,7 @@ import { migrateObservatoryData, normalizeStudy } from "./data-migration";
 import { formatStudyDeletionConfirmation } from "./study-deletion";
 import { buildTheoryEvidenceLink, TheoryEngine } from "./engines/TheoryEngine";
 import { StudySynthesisEngine } from "./engines/study-synthesis";
-import { GlobalObservatory, StudySuggestionEngine } from "./global-observatory";
+import { eventContainsUnverifiedData, GlobalObservatory, StudySuggestionEngine } from "./global-observatory";
 import type { SyncStatus } from "./repositories/SyncService";
 
 export function useObservatory() {
@@ -388,6 +388,12 @@ export function useObservatory() {
       const globalObservatory = GlobalObservatory.refresh(current.globalObservatory ?? GlobalObservatory.initialState());
       const event = globalObservatory.events.find((item) => item.id === eventId);
       if (!event) return current;
+      if (eventContainsUnverifiedData(event)) {
+        const confirmed = window.confirm(
+          "Avertissement explicite: cet evenement contient des donnees simulees ou sans provenance verifiable. Confirmez-vous la creation d'une etude scientifique a partir de ces donnees marquees ?"
+        );
+        if (!confirmed) return current;
+      }
       const study = {
         ...StudySuggestionEngine.createStudy(event, now),
         ownerId: authUserId ?? undefined

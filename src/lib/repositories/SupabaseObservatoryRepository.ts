@@ -142,6 +142,7 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
     const global = GlobalObservatory.refresh(data.globalObservatory ?? GlobalObservatory.initialState());
     const rows = buildGlobalRows(global, ownerId);
     await upsertOrSkip(this.client, "global_sources", rows.globalSources, "id");
+    await upsertOrSkip(this.client, "historical_import_sessions", rows.historicalImportSessions, "id");
     await upsertOrSkip(this.client, "global_articles", rows.globalArticles, "id");
     await upsertOrSkip(this.client, "global_events", rows.globalEvents, "id");
     await upsertOrSkip(this.client, "global_event_articles", rows.globalEventArticles, "event_id,article_id");
@@ -152,7 +153,6 @@ export class SupabaseObservatoryRepository implements ObservatoryRepository {
     await upsertOrSkip(this.client, "global_study_suggestions", rows.globalSuggestions, "id");
     await upsertOrSkip(this.client, "global_learning_signals", rows.globalLearningSignals, "id");
     await upsertOrSkip(this.client, "global_collection_logs", rows.globalCollectionLogs, "id");
-    await upsertOrSkip(this.client, "historical_import_sessions", rows.historicalImportSessions, "id");
   }
 
   private async loadGlobalObservatory(ownerId: string, fallback?: ObservatoryData["globalObservatory"]) {
