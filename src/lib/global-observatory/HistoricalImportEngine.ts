@@ -340,7 +340,7 @@ export class GdeltHistoricalConnector implements HistoricalConnector {
           cursor.subdivided += 1;
           const coverage = gdeltCoverage(input.connector.id, interval, raw.length, maxRecords, "subdivided", cursor);
           return {
-            articles: [],
+            articles: received.map((article, index) => this.toSource(article, input, requestedUrl, index)),
             nextCursor: encodeGdeltCursor(cursor),
             coverage,
             logs: [

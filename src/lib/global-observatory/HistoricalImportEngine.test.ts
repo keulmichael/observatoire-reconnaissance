@@ -194,7 +194,7 @@ describe("HistoricalImportEngine", () => {
     const page = await connector.fetchPage({ connector: source, date: "2026-01-01", limit: 10, now: "2026-01-08T00:00:00.000Z" });
 
     expect(requestedUrls[0]).toContain("maxrecords=250");
-    expect(page.articles).toHaveLength(0);
+    expect(page.articles).toHaveLength(250);
     expect(page.nextCursor).toContain("\"levelMinutes\":180");
     expect(page.coverage?.completeCoverage).toBe(false);
     expect(page.coverage?.subdividedWindows).toBe(1);
